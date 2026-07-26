@@ -212,6 +212,15 @@ input.picker-search{width:100%}
 .gender-btn.gender-female{background:#3d1030;border-color:#ec4899;color:#f9a8d4}
 .gender-btn.gender-nonbinary{background:#2d1a50;border-color:#a855f7;color:#d8b4fe}
 
+/* ── Refresh button ── */
+#btn-refresh{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:15px;
+  padding:6px 10px;border-radius:8px;cursor:pointer;transition:background .15s;line-height:1}
+#btn-refresh:hover{background:#2a3350}
+
+/* ── Rel picker section labels ── */
+.rel-section-label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.8px;color:#4a5568;margin:10px 0 5px}
+
 @media(min-width:560px){
   .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
   #modal-overlay{align-items:center}
@@ -229,6 +238,7 @@ input.picker-search{width:100%}
     <div class="header-right">
       <span id="member-count"></span>
       <span id="app-version"></span>
+      <button id="btn-refresh" title="Refresh layout">🔄</button>
       <button id="btn-fit" title="Fit tree to screen">⤢</button>
       <button id="btn-export">📤 Export</button>
     </div>
@@ -274,7 +284,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.1';
+const APP_VERSION = 'v2.2';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -292,6 +302,17 @@ const RC = {
 const COLORS = ['#4A90E2','#E67E22','#2ECC71','#9B59B6','#E74C3C','#1ABC9C','#F39C12','#e84393'];
 const REL_LABELS = { child:'child', spouse:'spouse / partner', sibling:'sibling', parent:'parent' };
 const REL_ICONS  = { child:'👶', spouse:'💑', sibling:'👫', parent:'👆' };
+
+/* Sub-typed relationship keys — each maps to a base relType + default gender */
+const REL_SUB = {
+  child:   { type:'child',   gender:'',       icon:'👶', label:'Child'   },
+  husband: { type:'spouse',  gender:'male',   icon:'🤵', label:'Husband' },
+  wife:    { type:'spouse',  gender:'female', icon:'👰', label:'Wife'    },
+  father:  { type:'parent',  gender:'male',   icon:'👨', label:'Father'  },
+  mother:  { type:'parent',  gender:'female', icon:'👩', label:'Mother'  },
+  brother: { type:'sibling', gender:'male',   icon:'👦', label:'Brother' },
+  sister:  { type:'sibling', gender:'female', icon:'👧', label:'Sister'  },
+};
 
 /* ═══════════════════════════════════════════════════════════════
    APP STATE
@@ -324,6 +345,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-export').addEventListener('click', doExport);
   document.getElementById('btn-import').addEventListener('click', doImportClick);
   document.getElementById('btn-fit').addEventListener('click', treeFit);
+  document.getElementById('btn-refresh').addEventListener('click', layoutRefresh);
 
   /* Clear highlight when tapping the SVG background */
   document.getElementById('tree-svg').addEventListener('click', e => {
@@ -570,6 +592,7 @@ function personAddRel(contextId, relType, fields) {
     if (contextId === S.data.rootId) S.data.rootId = id;
   }
 
+  S._pos = {};
   S._layoutDirty = true;
   return id;
 }
@@ -619,6 +642,7 @@ function personDelete(id) {
       S.data.people[nid] = mkPerson(nid, [], { firstName: 'You' });
     }
   }
+  S._pos = {};
   S._layoutDirty = true;
 }
 
@@ -714,6 +738,7 @@ function linkExisting(contextId, relType, targetId) {
     if (S.data.rootId === contextId) S.data.rootId = targetId;
   }
 
+  S._pos = {};
   S._layoutDirty = true;
   dataSave();
   treeRender();
@@ -775,12 +800,26 @@ function layoutNodes(gen) {
   const ids    = Object.keys(people);
   if (!ids.length) return {};
 
-  const nodes = ids.map(id => ({
-    id,
-    gen: gen[id] ?? 0,
-    x:  S._pos[id] ? S._pos[id].x : (Math.random() - 0.5) * Math.max(ids.length * 60, 200),
-    y:  (gen[id] ?? 0) * V_GAP,
-  }));
+  const nodes = ids.map(id => {
+    const p   = people[id];
+    const g   = gen[id] ?? 0;
+    const cached = S._pos[id];
+    let ix, iy = g * V_GAP;
+    if (cached) {
+      ix = cached.x;
+    } else {
+      /* Smart seed: average parent X, or near spouse, or spread by index */
+      const parXs = (p.parents || []).filter(pid => S._pos[pid]).map(pid => S._pos[pid].x);
+      if (parXs.length) {
+        ix = parXs.reduce((a,b)=>a+b,0) / parXs.length;
+      } else if (p.spouseId && S._pos[p.spouseId]) {
+        ix = S._pos[p.spouseId].x + NODE_R * 2.8;
+      } else {
+        ix = (Math.random() - 0.5) * Math.max(ids.length * 90, 300);
+      }
+    }
+    return { id, gen: g, x: ix, y: iy };
+  });
 
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
 
@@ -815,16 +854,17 @@ function layoutNodes(gen) {
     });
   });
 
+  const hasCached = ids.some(id => S._pos[id]);
   d3.forceSimulation(nodes)
     .force('y',        d3.forceY(d => d.gen * V_GAP).strength(1.0))
-    .force('x',        d3.forceX(0).strength(0.04))
-    .force('collide',  d3.forceCollide(NODE_R * 1.9).strength(0.65))
+    .force('x',        d3.forceX(0).strength(0.03))
+    .force('collide',  d3.forceCollide(NODE_R * 2.3).strength(0.7))
     .force('spouse',   d3.forceLink(spouseLinks).distance(NODE_R * 2 + 8).strength(0.99))
     .force('coparent', d3.forceLink(coParentLinks).distance(NODE_R * 2 + 8).strength(0.55))
     .force('parent',   d3.forceLink(parentLinks).distance(V_GAP * 0.72).strength(0.18))
-    .alphaDecay(0.025)
+    .alphaDecay(0.022)
     .stop()
-    .tick(300);
+    .tick(hasCached ? 300 : 500);
 
   nodes.forEach(n => { S._pos[n.id] = { x: n.x, y: n.y }; });
   return nodeById;
@@ -1039,29 +1079,32 @@ function treeRender() {
     });
   });
 
-  /* Legend (fixed, not pannable) */
-  const legendItems = [
-    [RC.parent,  'Parent → Child',     false],
-    [RC.spouse,  'Spouse / Partner',   true],
-    [RC.sibling, 'Sibling',            true],
-    [RC.child,   'Child (ring)',        false],
-    [RC.parent,  'Parent (ring)',       false],
+  /* Legend — horizontal bar fixed at bottom of SVG */
+  const svgEl2 = document.getElementById('tree-svg');
+  const svgW = svgEl2.clientWidth  || window.innerWidth;
+  const svgH = svgEl2.clientHeight || (window.innerHeight - 112);
+  const hItems = [
+    { color: RC.parent,  label: 'Parent-Child', dashed: false },
+    { color: RC.spouse,  label: 'Spouse',        dashed: true,  sym: '♥' },
+    { color: RC.sibling, label: 'Sibling',       dashed: true },
   ];
-  const legendH = 14 + legendItems.length * 20 + 8;
-  const legendSvg = `
-    <rect rx="8" ry="8" x="0" y="0" width="168" height="${legendH}"
-      fill="#12151f" fill-opacity="0.92" stroke="#2e3a56"/>
-    <text x="10" y="14" font-size="10" font-weight="700" fill="#6b7a99"
-      font-family="system-ui" letter-spacing=".8">LEGEND</text>
-    ${legendItems.map(([c, label, dashed], i) => `
-      <line x1="10" y1="${26 + i*20}" x2="30" y2="${26 + i*20}"
-        stroke="${c}" stroke-width="2.5" ${dashed ? 'stroke-dasharray="5,3"' : ''}/>
-      <text x="36" y="${30 + i*20}" font-size="11" fill="#8892a4"
-        font-family="system-ui">${label}</text>
-    `).join('')}`;
-
-  document.getElementById('tree-legend-fixed').innerHTML =
-    `<g transform="translate(10,10)">${legendSvg}</g>`;
+  const iW = 112, hPad = 12;
+  const barW = hItems.length * iW + hPad * 2;
+  const bx = Math.max(8, (svgW - barW) / 2);
+  const by = svgH - 36;
+  let hLeg = `<rect x="${bx-hPad}" y="${by-8}" width="${barW+hPad}" height="28" rx="7"
+    fill="#0a0d14" fill-opacity="0.88" stroke="#1e2538" pointer-events="none"/>`;
+  hItems.forEach((it, i) => {
+    const x = bx + i * iW, y = by + 6;
+    hLeg += `<line x1="${x}" y1="${y}" x2="${x+22}" y2="${y}" stroke="${it.color}"
+        stroke-width="2.5" ${it.dashed?'stroke-dasharray="5,3"':''} stroke-linecap="round"
+        pointer-events="none"/>
+      ${it.sym ? `<text x="${x+11}" y="${y}" text-anchor="middle" dominant-baseline="middle"
+        fill="${it.color}" font-size="10" font-family="system-ui" pointer-events="none">${it.sym}</text>` : ''}
+      <text x="${x+28}" y="${y}" dominant-baseline="middle" fill="#6b7a99"
+        font-size="11" font-family="system-ui" pointer-events="none">${it.label}</text>`;
+  });
+  document.getElementById('tree-legend-fixed').innerHTML = hLeg;
 }
 
 function treeFit() {
@@ -1080,6 +1123,13 @@ function treeFit() {
     d3.select('#tree-svg').transition().duration(500)
       .call(treeZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
   } catch {}
+}
+
+function layoutRefresh() {
+  S._pos = {};
+  S._layoutDirty = true;
+  treeRender();
+  treeFit();
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1176,50 +1226,68 @@ function relPickerRender() {
   const { personId } = S.relpick;
   const p = S.data.people[personId];
   const name = eh(p?.firstName || 'them');
-  const opts = [
-    { key:'child',   disabled: false },
-    { key:'spouse',  disabled: !!p?.spouseId },
-    { key:'sibling', disabled: false },
-    { key:'parent',  disabled: false },
-  ];
-  const btns = opts.map(o => `
-    <button class="rel-btn" onclick="relPickerSelect('${o.key}')" ${o.disabled?'disabled':''}>
-      <span class="rel-btn-icon">${REL_ICONS[o.key]}</span>
-      <span class="rel-btn-label">${capitalize(REL_LABELS[o.key])}</span>
-      ${o.disabled ? '<span class="rel-btn-sub">Already set</span>' : ''}
-    </button>`).join('');
+  const spDis = !!p?.spouseId;
+
+  const btn = (subKey, disabled) => {
+    const s = REL_SUB[subKey];
+    return `<button class="rel-btn" onclick="relPickerSelect('${subKey}')" ${disabled?'disabled':''}>
+      <span class="rel-btn-icon">${s.icon}</span>
+      <span class="rel-btn-label">${s.label}</span>
+      ${disabled ? '<span class="rel-btn-sub">Already set</span>' : ''}
+    </button>`;
+  };
+
   document.body.insertAdjacentHTML('beforeend', `
     <div id="rel-overlay" onclick="if(event.target.id==='rel-overlay')relPickerClose()">
       <div class="rel-sheet" onclick="event.stopPropagation()">
         <div class="modal-handle"></div>
         <div class="rel-title">Add relative for <strong style="color:#c0c8d8">${name}</strong></div>
-        <div class="rel-grid">${btns}</div>
+        <div style="padding:0 16px 4px">
+          <div class="rel-section-label">Child</div>
+          <div style="margin-bottom:2px">${btn('child',false)}</div>
+          <div class="rel-section-label">Partner</div>
+          <div class="rel-grid" style="padding:0;margin-bottom:2px">
+            ${btn('husband',spDis)}${btn('wife',spDis)}
+          </div>
+          <div class="rel-section-label">Parent</div>
+          <div class="rel-grid" style="padding:0;margin-bottom:2px">
+            ${btn('father',false)}${btn('mother',false)}
+          </div>
+          <div class="rel-section-label">Sibling</div>
+          <div class="rel-grid" style="padding:0">
+            ${btn('brother',false)}${btn('sister',false)}
+          </div>
+        </div>
         <button class="rel-cancel-btn" onclick="relPickerClose()">Cancel</button>
       </div>
     </div>`);
 }
 
-function relPickerSelect(relType) {
+function relPickerSelect(subKey) {
   const { personId } = S.relpick;
+  const sub = REL_SUB[subKey];
   relPickerClose();
-  const eligible = getEligiblePeople(personId, relType);
-  if (eligible.length > 0) linkChoiceOpen(personId, relType, eligible.length);
-  else modalOpen({ contextId: personId, relType, mode: 'add' });
+  const eligible = getEligiblePeople(personId, sub.type);
+  if (eligible.length > 0) linkChoiceOpen(personId, sub.type, eligible.length, subKey);
+  else modalOpen({ contextId: personId, relType: sub.type, mode: 'add', subKey });
 }
 
 /* ═══════════════════════════════════════════════════════════════
    LINK CHOICE (New person vs Link existing)
 ═══════════════════════════════════════════════════════════════ */
-function linkChoiceOpen(contextId, relType, eligibleCount) {
-  S.linkpick = { contextId, relType, eligibleCount };
+function linkChoiceOpen(contextId, relType, eligibleCount, subKey) {
+  S.linkpick = { contextId, relType, eligibleCount, subKey };
   const ctx  = S.data.people[contextId];
   const name = eh([ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'them');
+  const sub  = subKey ? REL_SUB[subKey] : null;
+  const dispIcon  = sub ? sub.icon  : REL_ICONS[relType];
+  const dispLabel = sub ? sub.label : capitalize(REL_LABELS[relType]);
   document.getElementById('link-choice-overlay')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
     <div id="link-choice-overlay" onclick="if(event.target.id==='link-choice-overlay')linkChoiceClose()">
       <div class="rel-sheet" onclick="event.stopPropagation()">
         <div class="modal-handle"></div>
-        <div class="rel-title">${REL_ICONS[relType]} ${capitalize(REL_LABELS[relType])} for
+        <div class="rel-title">${dispIcon} ${dispLabel} for
           <strong style="color:#c0c8d8">${name}</strong></div>
         <div class="link-choice">
           <button class="link-choice-btn" onclick="linkChoiceNew()">
@@ -1246,23 +1314,26 @@ function linkChoiceClose() {
   document.getElementById('link-choice-overlay')?.remove();
   S.linkpick = null;
 }
-function linkChoiceNew()      { const {contextId,relType}=S.linkpick; linkChoiceClose(); modalOpen({contextId,relType,mode:'add'}); }
-function linkChoiceExisting() { const {contextId,relType}=S.linkpick; linkChoiceClose(); personPickerOpen(contextId,relType); }
+function linkChoiceNew()      { const {contextId,relType,subKey}=S.linkpick; linkChoiceClose(); modalOpen({contextId,relType,mode:'add',subKey}); }
+function linkChoiceExisting() { const {contextId,relType,subKey}=S.linkpick; linkChoiceClose(); personPickerOpen(contextId,relType,subKey); }
 
 /* ═══════════════════════════════════════════════════════════════
    PERSON PICKER
 ═══════════════════════════════════════════════════════════════ */
-function personPickerOpen(contextId, relType) {
-  S.personpick = { contextId, relType, search: '' };
-  const ctx    = S.data.people[contextId];
+function personPickerOpen(contextId, relType, subKey) {
+  S.personpick = { contextId, relType, subKey, search: '' };
+  const ctx     = S.data.people[contextId];
   const ctxName = eh([ctx?.firstName,ctx?.lastName].filter(Boolean).join(' ') || 'person');
+  const sub     = subKey ? REL_SUB[subKey] : null;
+  const relIcon  = sub ? sub.icon  : REL_ICONS[relType];
+  const relLabel = sub ? sub.label : REL_LABELS[relType];
   document.getElementById('person-picker-overlay')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
     <div id="person-picker-overlay" onclick="if(event.target.id==='person-picker-overlay')personPickerClose()">
       <div class="person-picker-sheet" onclick="event.stopPropagation()">
         <div class="modal-handle"></div>
         <div class="picker-header">
-          <div class="picker-title">Link as ${REL_ICONS[relType]} <strong>${REL_LABELS[relType]}</strong> of <strong>${ctxName}</strong></div>
+          <div class="picker-title">Link as ${relIcon} <strong>${relLabel}</strong> of <strong>${ctxName}</strong></div>
           <input class="field picker-search" placeholder="🔍 Search by name…"
                  oninput="personPickerSearch(this.value)" autocomplete="off" autocorrect="off"/>
         </div>
@@ -1324,10 +1395,12 @@ function personPickerSelect(targetId) {
 ═══════════════════════════════════════════════════════════════ */
 function modalOpen(cfg) {
   const p = cfg.personId ? S.data.people[cfg.personId] : null;
+  const defGender = cfg.subKey ? (REL_SUB[cfg.subKey]?.gender || '') : '';
   S.modal = {
     personId:    cfg.personId  || null,
     contextId:   cfg.contextId || null,
     relType:     cfg.relType   || 'child',
+    subKey:      cfg.subKey    || null,
     initMode:    cfg.mode,
     mode:        cfg.mode,
     form: p ? {
@@ -1338,7 +1411,7 @@ function modalOpen(cfg) {
       occupation: p.occupation || '',
       phone:      p.phone      || '',
       photoId:    p.photoId    || null,
-    } : { firstName:'', lastName:'', gender:'', location:'', occupation:'', phone:'', photoId:null },
+    } : { firstName:'', lastName:'', gender:defGender, location:'', occupation:'', phone:'', photoId:null },
     preview:     (p?.photoId && S.photos[p.photoId]) || null,
     pendingFile: null,
     doRemove:    false,
@@ -1356,7 +1429,7 @@ function modalRender() {
   document.getElementById('modal-overlay')?.remove();
   if (!S.modal) return;
 
-  const { mode, form, preview, saving, initMode, personId, contextId, relType } = S.modal;
+  const { mode, form, preview, saving, initMode, personId, contextId, relType, subKey } = S.modal;
   const isEdit  = mode==='edit' || initMode==='add';
   const isAdd   = initMode==='add';
   const isRoot  = personId === S.data.rootId;
@@ -1398,49 +1471,55 @@ function modalRender() {
     });
     const siblingsArr = [...siblingIds].map(sid => S.data.people[sid]).filter(Boolean);
 
+    const gLabel = (g, m, f, n) => g==='male'?m : g==='female'?f : n;
     const relParts = [];
     if (spouse) {
-      const sName = [spouse.firstName, spouse.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const sName  = [spouse.firstName, spouse.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const spLbl  = gLabel(spouse.gender, 'Husband', 'Wife', 'Spouse / Partner');
+      const spIcon = gLabel(spouse.gender, '🤵', '👰', '♥');
       relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.spouse};padding-left:10px">
-        <span class="row-icon">♥</span>
-        <span>Spouse/Partner:&nbsp;
-          <button class="person-link" onclick="modalClose();modalOpen({personId:'${spouse.id}',mode:'view'})">${eh(sName)}</button>
+        <span class="row-icon">${spIcon}</span>
+        <span>${spLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${spouse.id}',mode:'view'})">${eh(sName)}</button>
         </span></div>`);
     }
     parentsArr.forEach(par => {
-      const pName = [par.firstName, par.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const pName  = [par.firstName, par.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const pLbl   = gLabel(par.gender, 'Father', 'Mother', 'Parent');
+      const pIcon  = gLabel(par.gender, '👨', '👩', '👆');
       relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px">
-        <span class="row-icon">👆</span>
-        <span>Parent:&nbsp;
-          <button class="person-link" onclick="modalClose();modalOpen({personId:'${par.id}',mode:'view'})">${eh(pName)}</button>
+        <span class="row-icon">${pIcon}</span>
+        <span>${pLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${par.id}',mode:'view'})">${eh(pName)}</button>
         </span></div>`);
     });
-    if (siblingsArr.length) {
-      const links = siblingsArr.map(s => {
-        const sn = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
-        return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${s.id}',mode:'view'})">${eh(sn)}</button>`;
-      }).join(', ');
+    siblingsArr.forEach(s => {
+      const sn    = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const sLbl  = gLabel(s.gender, 'Brother', 'Sister', 'Sibling');
+      const sIcon = gLabel(s.gender, '👦', '👧', '👫');
       relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.sibling};padding-left:10px">
-        <span class="row-icon">👫</span>
-        <span>Siblings: ${links}</span></div>`);
-    }
-    if (childrenArr.length) {
-      const links = childrenArr.map(c => {
-        const cn = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unnamed';
-        return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${c.id}',mode:'view'})">${eh(cn)}</button>`;
-      }).join(', ');
+        <span class="row-icon">${sIcon}</span>
+        <span>${sLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${s.id}',mode:'view'})">${eh(sn)}</button>
+        </span></div>`);
+    });
+    childrenArr.forEach(c => {
+      const cn    = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const cLbl  = gLabel(c.gender, 'Son', 'Daughter', 'Child');
+      const cIcon = gLabel(c.gender, '👦', '👧', '👶');
       relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.child};padding-left:10px">
-        <span class="row-icon">👶</span>
-        <span>Children: ${links}</span></div>`);
-    }
+        <span class="row-icon">${cIcon}</span>
+        <span>${cLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${c.id}',mode:'view'})">${eh(cn)}</button>
+        </span></div>`);
+    });
     if (relParts.length) relRows = `<div class="rel-section-title">Family</div>${relParts.join('')}<div class="section-sep"></div>`;
   }
 
   let addCtx = '';
   if (isAdd && contextId) {
-    const ctx     = S.data.people[contextId];
-    const ctxName = [ctx?.firstName,ctx?.lastName].filter(Boolean).join(' ') || 'person';
-    addCtx = `<div class="add-ctx">Adding <strong>${REL_ICONS[relType]} ${REL_LABELS[relType]}</strong> for ${eh(ctxName)}</div>`;
+    const ctx      = S.data.people[contextId];
+    const ctxName  = [ctx?.firstName,ctx?.lastName].filter(Boolean).join(' ') || 'person';
+    const sub      = subKey ? REL_SUB[subKey] : null;
+    const addLabel = sub ? sub.label : capitalize(REL_LABELS[relType]);
+    const addIcon  = sub ? sub.icon  : REL_ICONS[relType];
+    addCtx = `<div class="add-ctx">Adding <strong>${addIcon} ${addLabel}</strong> for ${eh(ctxName)}</div>`;
   }
 
   const body = isEdit ? `

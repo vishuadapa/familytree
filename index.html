@@ -310,7 +310,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.4';
+const APP_VERSION = 'v2.5';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -1502,80 +1502,102 @@ function modalRender() {
     const siblingsArr = [...siblingIds].map(sid => S.data.people[sid]).filter(Boolean);
 
     const gLabel = (g, m, f, n) => g==='male'?m : g==='female'?f : n;
-    const relParts = [];
+
+    const plink = (person, label, icon, color, opacity) => {
+      const name = [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      const op   = opacity < 1 ? `;opacity:${opacity}` : '';
+      return `<div class="view-row" style="border-left:3px solid ${color};padding-left:10px${op}">
+        <span class="row-icon">${icon}</span>
+        <span>${label}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${person.id}',mode:'view'})">${eh(name)}</button>
+        </span></div>`;
+    };
+    const sec = (title, rows) => rows.length
+      ? `<div class="rel-section-title" style="margin-top:8px">${title}</div>${rows.join('')}`
+      : '';
+
+    const sections = [];
+
+    /* Spouse */
     if (spouse) {
-      const sName  = [spouse.firstName, spouse.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      const spLbl  = gLabel(spouse.gender, 'Husband', 'Wife', 'Spouse / Partner');
-      const spIcon = gLabel(spouse.gender, '🤵', '👰', '♥');
-      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.spouse};padding-left:10px">
-        <span class="row-icon">${spIcon}</span>
-        <span>${spLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${spouse.id}',mode:'view'})">${eh(sName)}</button>
-        </span></div>`);
+      sections.push(sec('Spouse / Partner', [plink(spouse,
+        gLabel(spouse.gender,'Husband','Wife','Spouse / Partner'),
+        gLabel(spouse.gender,'🤵','👰','♥'), RC.spouse, 1)]));
     }
-    parentsArr.forEach(par => {
-      const pName  = [par.firstName, par.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      const pLbl   = gLabel(par.gender, 'Father', 'Mother', 'Parent');
-      const pIcon  = gLabel(par.gender, '👨', '👩', '👆');
-      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px">
-        <span class="row-icon">${pIcon}</span>
-        <span>${pLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${par.id}',mode:'view'})">${eh(pName)}</button>
-        </span></div>`);
-    });
+
+    /* Parents */
+    if (parentsArr.length) {
+      sections.push(sec('Parents', parentsArr.map(par => plink(par,
+        gLabel(par.gender,'Father','Mother','Parent'),
+        gLabel(par.gender,'👨','👩','👆'), RC.parent, 1))));
+    }
+
     /* Grandparents */
-    const grandparentsArr = parentsArr.flatMap(par =>
-      (par.parents || []).map(gpid => S.data.people[gpid]).filter(Boolean)
-    );
-    const seenGp = new Set();
-    const uniqueGp = grandparentsArr.filter(gp => { if (seenGp.has(gp.id)) return false; seenGp.add(gp.id); return true; });
+    const uniq = (arr) => { const s=new Set(); return arr.filter(x=>{ if(s.has(x.id)) return false; s.add(x.id); return true; }); };
+    const uniqueGp = uniq(parentsArr.flatMap(par =>
+      (par.parents||[]).map(id=>S.data.people[id]).filter(Boolean)));
     if (uniqueGp.length) {
-      relParts.push(`<div class="ancestor-section">Grandparents</div>`);
-      uniqueGp.forEach(gp => {
-        const gpName = [gp.firstName, gp.lastName].filter(Boolean).join(' ') || 'Unnamed';
-        const gpLbl  = gLabel(gp.gender, 'Grandfather', 'Grandmother', 'Grandparent');
-        const gpIcon = gLabel(gp.gender, '👴', '👵', '👴');
-        relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px;opacity:.85">
-          <span class="row-icon">${gpIcon}</span>
-          <span>${gpLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${gp.id}',mode:'view'})">${eh(gpName)}</button>
-          </span></div>`);
-      });
+      sections.push(sec('Grandparents', uniqueGp.map(gp => plink(gp,
+        gLabel(gp.gender,'Grandfather','Grandmother','Grandparent'),
+        gLabel(gp.gender,'👴','👵','👴'), RC.parent, .85))));
     }
+
     /* Great-grandparents */
-    const greatGpArr = uniqueGp.flatMap(gp =>
-      (gp.parents || []).map(ggpid => S.data.people[ggpid]).filter(Boolean)
-    );
-    const seenGgp = new Set();
-    const uniqueGgp = greatGpArr.filter(ggp => { if (seenGgp.has(ggp.id)) return false; seenGgp.add(ggp.id); return true; });
+    const uniqueGgp = uniq(uniqueGp.flatMap(gp =>
+      (gp.parents||[]).map(id=>S.data.people[id]).filter(Boolean)));
     if (uniqueGgp.length) {
-      relParts.push(`<div class="ancestor-section">Great-Grandparents</div>`);
-      uniqueGgp.forEach(ggp => {
-        const ggpName = [ggp.firstName, ggp.lastName].filter(Boolean).join(' ') || 'Unnamed';
-        const ggpLbl  = gLabel(ggp.gender, 'Great-Grandfather', 'Great-Grandmother', 'Great-Grandparent');
-        const ggpIcon = gLabel(ggp.gender, '👴', '👵', '👴');
-        relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px;opacity:.7">
-          <span class="row-icon">${ggpIcon}</span>
-          <span>${ggpLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${ggp.id}',mode:'view'})">${eh(ggpName)}</button>
-          </span></div>`);
-      });
+      sections.push(sec('Great-Grandparents', uniqueGgp.map(ggp => plink(ggp,
+        gLabel(ggp.gender,'Great-Grandfather','Great-Grandmother','Great-Grandparent'),
+        gLabel(ggp.gender,'👴','👵','👴'), RC.parent, .7))));
     }
-    siblingsArr.forEach(s => {
-      const sn    = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      const sLbl  = gLabel(s.gender, 'Brother', 'Sister', 'Sibling');
-      const sIcon = gLabel(s.gender, '👦', '👧', '👫');
-      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.sibling};padding-left:10px">
-        <span class="row-icon">${sIcon}</span>
-        <span>${sLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${s.id}',mode:'view'})">${eh(sn)}</button>
-        </span></div>`);
+
+    /* Great-great-grandparents */
+    const uniqueGggp = uniq(uniqueGgp.flatMap(ggp =>
+      (ggp.parents||[]).map(id=>S.data.people[id]).filter(Boolean)));
+    if (uniqueGggp.length) {
+      sections.push(sec('Great-Great-Grandparents', uniqueGggp.map(gggp => plink(gggp,
+        gLabel(gggp.gender,'Great-Great-Grandfather','Great-Great-Grandmother','Great-Great-Grandparent'),
+        gLabel(gggp.gender,'👴','👵','👴'), RC.parent, .55))));
+    }
+
+    /* Siblings */
+    if (siblingsArr.length) {
+      sections.push(sec('Siblings', siblingsArr.map(s => plink(s,
+        gLabel(s.gender,'Brother','Sister','Sibling'),
+        gLabel(s.gender,'👦','👧','👫'), RC.sibling, 1))));
+    }
+
+    /* First cousins: children of parent's siblings */
+    const auntUncleIds = new Set();
+    parentsArr.forEach(par => {
+      const parGp = (par.parents||[]).map(gid=>S.data.people[gid]).filter(Boolean);
+      parGp.forEach(gp => (gp.children||[]).forEach(cid => { if (cid!==par.id) auntUncleIds.add(cid); }));
+      (S.data.links||[]).forEach(lk => {
+        if (lk.type!=='sibling') return;
+        if (lk.a===par.id) auntUncleIds.add(lk.b);
+        if (lk.b===par.id) auntUncleIds.add(lk.a);
+      });
     });
-    childrenArr.forEach(c => {
-      const cn    = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      const cLbl  = gLabel(c.gender, 'Son', 'Daughter', 'Child');
-      const cIcon = gLabel(c.gender, '👦', '👧', '👶');
-      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.child};padding-left:10px">
-        <span class="row-icon">${cIcon}</span>
-        <span>${cLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${c.id}',mode:'view'})">${eh(cn)}</button>
-        </span></div>`);
+    const cousinIds = new Set();
+    auntUncleIds.forEach(auid => {
+      const au = S.data.people[auid];
+      if (!au) return;
+      (au.children||[]).forEach(cid => { if (!siblingIds.has(cid) && cid!==p.id) cousinIds.add(cid); });
     });
-    if (relParts.length) relRows = `<div class="rel-section-title">Family</div>${relParts.join('')}<div class="section-sep"></div>`;
+    const cousinsArr = [...cousinIds].map(id=>S.data.people[id]).filter(Boolean);
+    if (cousinsArr.length) {
+      sections.push(sec('First Cousins', cousinsArr.map(c => plink(c,
+        gLabel(c.gender,'Male Cousin','Female Cousin','Cousin'),
+        gLabel(c.gender,'👦','👧','👫'), RC.sibling, .85))));
+    }
+
+    /* Children */
+    if (childrenArr.length) {
+      sections.push(sec('Children', childrenArr.map(c => plink(c,
+        gLabel(c.gender,'Son','Daughter','Child'),
+        gLabel(c.gender,'👦','👧','👶'), RC.child, 1))));
+    }
+
+    if (sections.length) relRows = `${sections.join('')}<div class="section-sep"></div>`;
   }
 
   let addCtx = '';

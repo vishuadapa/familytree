@@ -86,11 +86,20 @@ button{font-family:inherit}
 .row-icon{font-size:18px;flex:none}
 .phone-link{color:#4A90E2;text-decoration:none}
 .phone-link:hover{text-decoration:underline}
+.person-link{color:#4A90E2;cursor:pointer;background:none;border:none;font:inherit;
+  font-size:15px;padding:0;text-align:left}
+.person-link:hover{text-decoration:underline}
 .no-details{color:#4a5568;font-size:14px;margin:0;padding:8px 0}
+.section-sep{height:1px;background:#1e2538;margin:8px 0}
+.rel-section-title{font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.8px;color:#4a5568;margin:12px 0 4px}
 
 /* ── Edit form ── */
 .form-stack{display:flex;flex-direction:column;gap:10px}
 .form-pair{display:flex;gap:10px}
+.add-ctx{font-size:13px;color:#6b7a99;background:#1a1f2e;border:1px solid #2e3a56;
+  border-radius:8px;padding:8px 12px;margin-bottom:2px}
+.add-ctx strong{color:#a0aec0}
 input.field{width:100%;background:#1a1f2e;border:1px solid #2e3a56;border-radius:10px;
   padding:13px 14px;font-size:15px;color:#e0e6f0;outline:none;transition:border-color .15s;
   -webkit-appearance:none;font-family:inherit}
@@ -110,6 +119,28 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
   color:#f87171;border:1px solid rgba(239,68,68,.3)}
 .btn-del:hover{background:rgba(239,68,68,.25)}
 
+/* ── Relationship picker ── */
+#rel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:300;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+.rel-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
+  border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
+  animation:slide-up .28s cubic-bezier(.32,.72,0,1);
+  padding-bottom:env(safe-area-inset-bottom,8px)}
+.rel-title{font-size:15px;font-weight:600;color:#8892a4;text-align:center;
+  padding:4px 20px 8px}
+.rel-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:4px 16px 12px}
+.rel-btn{background:#1e2538;border:1px solid #2e3a56;border-radius:14px;
+  padding:18px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;
+  cursor:pointer;color:#c0c8d8;transition:background .15s,border-color .15s;width:100%}
+.rel-btn:hover,.rel-btn:active{background:#2a3350;border-color:#4A90E2}
+.rel-btn:disabled{opacity:.4;cursor:not-allowed}
+.rel-btn-icon{font-size:28px;line-height:1}
+.rel-btn-label{font-size:14px;font-weight:600}
+.rel-btn-sub{font-size:11px;color:#4a5568}
+.rel-cancel-btn{width:calc(100% - 32px);margin:0 16px 8px;padding:14px;background:#1e2538;
+  border:none;border-radius:12px;font-size:16px;font-weight:600;color:#a0aec0;cursor:pointer}
+.rel-cancel-btn:hover{background:#2a3350}
+
 /* ── Leaflet overrides ── */
 .leaflet-container{background:#1a1f2e}
 .leaflet-popup-content-wrapper{background:#12151f;border:1px solid #2e3a56;
@@ -121,6 +152,8 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
 @media(min-width:560px){
   .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
   #modal-overlay{align-items:center}
+  .rel-sheet{border-radius:20px;margin:auto}
+  #rel-overlay{align-items:center}
 }
 </style>
 </head>
@@ -175,18 +208,22 @@ const STORAGE_KEY = 'familytree_v1';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
-const H_GAP       = 120;
-const V_GAP       = 110;
+const H_GAP       = 130;
+const V_GAP       = 115;
 const COLORS = ['#4A90E2','#E67E22','#2ECC71','#9B59B6','#E74C3C','#1ABC9C','#F39C12','#e84393'];
+
+const REL_LABELS = { child:'child', spouse:'spouse / partner', sibling:'sibling', parent:'parent' };
+const REL_ICONS  = { child:'👶', spouse:'💑', sibling:'👫', parent:'👆' };
 
 /* ═══════════════════════════════════════════════════════════════
    APP STATE
 ═══════════════════════════════════════════════════════════════ */
 const S = {
-  data:   null,   // { rootId, people: {id: person} }
-  photos: {},     // photoId → dataURL
-  view:   'tree',
-  modal:  null,
+  data:    null,
+  photos:  {},
+  view:    'tree',
+  modal:   null,
+  relpick: null,
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -210,14 +247,25 @@ window.addEventListener('DOMContentLoaded', async () => {
 function dataLoad() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const d = JSON.parse(raw);
+      // Migrate: ensure spouseId and virtual fields exist on old data
+      Object.values(d.people).forEach(p => {
+        if (p.spouseId === undefined) p.spouseId = null;
+        if (p.virtual  === undefined) p.virtual  = false;
+      });
+      return d;
+    }
   } catch {}
   const id = uid();
   return {
     rootId: id,
     people: {
-      [id]: { id, firstName:'You', lastName:'', location:'', lat:null, lng:null,
-               occupation:'', phone:'', photoId:null, parentId:null, children:[] }
+      [id]: {
+        id, firstName:'You', lastName:'', location:'', lat:null, lng:null,
+        occupation:'', phone:'', photoId:null,
+        parentId:null, children:[], spouseId:null, virtual:false
+      }
     }
   };
 }
@@ -315,11 +363,67 @@ async function geocode(str) {
 /* ═══════════════════════════════════════════════════════════════
    CRUD
 ═══════════════════════════════════════════════════════════════ */
-function personAdd(parentId, fields) {
-  const id = uid();
-  S.data.people[id] = { id, parentId: parentId||null, children: [], ...fields };
-  if (parentId && S.data.people[parentId])
+
+function mkPerson(id, parentId, fields) {
+  return {
+    id, parentId: parentId || null, children: [],
+    spouseId: null, virtual: false,
+    firstName:'', lastName:'', location:'', lat:null, lng:null,
+    occupation:'', phone:'', photoId:null,
+    ...fields
+  };
+}
+
+function mkVirtualRoot() {
+  const vpId = uid();
+  S.data.people[vpId] = mkPerson(vpId, null, { virtual: true });
+  return vpId;
+}
+
+function personAddRel(contextId, relType, fields) {
+  const id  = uid();
+  const ctx = S.data.people[contextId];
+
+  if (relType === 'child') {
+    S.data.people[id] = mkPerson(id, contextId, fields);
+    ctx.children.push(id);
+
+  } else if (relType === 'spouse') {
+    if (ctx.spouseId) return null; // already has spouse
+    let parentId = ctx.parentId;
+    if (!parentId) {
+      parentId = mkVirtualRoot();
+      S.data.people[parentId].children.push(contextId);
+      ctx.parentId = parentId;
+      S.data.rootId = parentId;
+    }
+    S.data.people[id] = mkPerson(id, parentId, { ...fields, spouseId: contextId });
     S.data.people[parentId].children.push(id);
+    ctx.spouseId = id;
+
+  } else if (relType === 'sibling') {
+    let parentId = ctx.parentId;
+    if (!parentId) {
+      parentId = mkVirtualRoot();
+      S.data.people[parentId].children.push(contextId);
+      ctx.parentId = parentId;
+      S.data.rootId = parentId;
+    }
+    S.data.people[id] = mkPerson(id, parentId, fields);
+    S.data.people[parentId].children.push(id);
+
+  } else if (relType === 'parent') {
+    const oldParentId = ctx.parentId;
+    S.data.people[id] = mkPerson(id, oldParentId, { ...fields, children: [contextId] });
+    if (oldParentId && S.data.people[oldParentId]) {
+      const gp = S.data.people[oldParentId];
+      const idx = gp.children.indexOf(contextId);
+      if (idx >= 0) gp.children[idx] = id; else gp.children.push(id);
+    }
+    ctx.parentId = id;
+    if (contextId === S.data.rootId) S.data.rootId = id;
+  }
+
   return id;
 }
 
@@ -328,24 +432,48 @@ function personUpdate(id, fields) { Object.assign(S.data.people[id], fields); }
 function personDelete(id) {
   function sweep(pid) {
     const p = S.data.people[pid]; if (!p) return;
+    if (p.spouseId && S.data.people[p.spouseId]) {
+      S.data.people[p.spouseId].spouseId = null;
+    }
     (p.children||[]).forEach(sweep);
     delete S.data.people[pid];
   }
   const p = S.data.people[id]; if (!p) return;
   sweep(id);
-  if (p.parentId && S.data.people[p.parentId])
-    S.data.people[p.parentId].children = S.data.people[p.parentId].children.filter(c => c !== id);
+  if (p.parentId && S.data.people[p.parentId]) {
+    const par = S.data.people[p.parentId];
+    par.children = par.children.filter(c => c !== id);
+    // Clean up virtual parent if now empty or has only one visible child
+    if (par.virtual) {
+      if (par.children.length === 0) {
+        delete S.data.people[par.id];
+        if (S.data.rootId === par.id) {
+          const nid = uid();
+          S.data.rootId = nid;
+          S.data.people[nid] = mkPerson(nid, null, { firstName:'You' });
+        }
+      } else if (par.children.length === 1) {
+        const sole = par.children[0];
+        S.data.people[sole].parentId = par.parentId;
+        if (S.data.rootId === par.id) S.data.rootId = sole;
+        delete S.data.people[par.id];
+      }
+    }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
    COLOR HELPERS
 ═══════════════════════════════════════════════════════════════ */
 function branchColor(d3node) {
-  if (!d3node || d3node.depth === 0) return COLORS[0];
+  if (!d3node) return COLORS[0];
+  if (d3node.depth === 0 || (d3node.depth === 1 && d3node.parent?.data?.virtual)) {
+    return COLORS[0];
+  }
   let cur = d3node;
-  while (cur.parent && cur.parent.depth > 0) cur = cur.parent;
-  const idx = cur.parent?.children?.indexOf(cur) ?? 0;
-  return COLORS[idx % COLORS.length];
+  while (cur.parent && (cur.parent.depth > 0 && !cur.parent.data.virtual)) cur = cur.parent;
+  const idx = cur.parent?.children?.filter(c => !c.data.virtual).indexOf(cur) ?? 0;
+  return COLORS[(idx < 0 ? 0 : idx) % COLORS.length];
 }
 
 function personColor(personId) {
@@ -394,22 +522,48 @@ function treeRender() {
 
   // Clip paths for photos
   document.getElementById('tree-defs').innerHTML = root.descendants()
-    .filter(n => n.data.photoId && S.photos[n.data.photoId])
+    .filter(n => !n.data.virtual && n.data.photoId && S.photos[n.data.photoId])
     .map(n => `<clipPath id="cp-${n.data.id}"><circle r="${NODE_R}"/></clipPath>`)
     .join('');
 
-  // Links
-  const links = root.links().map(lk =>
-    `<path d="${diagonal(lk)}" fill="none" stroke="${branchColor(lk.target)}" stroke-width="2.5" stroke-opacity=".55"/>`
-  ).join('');
+  // Regular links — skip links FROM virtual nodes
+  const links = root.links()
+    .filter(lk => !lk.source.data.virtual)
+    .map(lk => {
+      const col = branchColor(lk.target);
+      return `<path d="${diagonal(lk)}" fill="none" stroke="${col}" stroke-width="2.5" stroke-opacity=".55"/>`;
+    }).join('');
+
+  // Spouse links — one per couple
+  const seenSpouse = new Set();
+  const spouseSvg = root.descendants()
+    .filter(n => !n.data.virtual && n.data.spouseId && !seenSpouse.has(n.data.id))
+    .map(n => {
+      const sNode = root.descendants().find(d => d.data.id === n.data.spouseId);
+      if (!sNode) return '';
+      seenSpouse.add(n.data.id);
+      seenSpouse.add(n.data.spouseId);
+      const mx = (n.x + sNode.x) / 2, my = (n.y + sNode.y) / 2;
+      return `<line x1="${n.x}" y1="${n.y}" x2="${sNode.x}" y2="${sNode.y}"
+        stroke="#e84393" stroke-width="2.5" stroke-dasharray="5,4" stroke-opacity=".75"/>
+        <text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="central"
+          font-size="13" font-family="system-ui" fill="#e84393"
+          stroke="#0f1117" stroke-width="3" paint-order="stroke">♥</text>`;
+    }).join('');
 
   // Nodes
   const nodes = root.descendants().map(n => {
+    // Virtual nodes are invisible pass-throughs
+    if (n.data.virtual) {
+      return `<g data-id="${n.data.id}" transform="translate(${n.x},${n.y})"></g>`;
+    }
+
     const col   = branchColor(n);
     const photo = n.data.photoId ? S.photos[n.data.photoId] : null;
     const init  = ((n.data.firstName||'')[0]+(n.data.lastName||'')[0]).toUpperCase() || '?';
     const name  = [n.data.firstName, n.data.lastName].filter(Boolean).join(' ');
     const loc   = n.data.location ? n.data.location.split(',')[0] : '';
+    const hasSpouse = !!n.data.spouseId;
 
     const face = photo
       ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}" width="${NODE_R*2}" height="${NODE_R*2}"
@@ -418,16 +572,24 @@ function treeRender() {
              font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
              pointer-events="none">${eh(init)}</text>`;
 
+    const heartBadge = hasSpouse
+      ? `<text x="${-NODE_R+8}" y="${-NODE_R+8}" text-anchor="middle" dominant-baseline="central"
+           font-size="12" font-family="system-ui" fill="#e84393"
+           stroke="#0f1117" stroke-width="2.5" paint-order="stroke"
+           pointer-events="none">♥</text>`
+      : '';
+
     return `
       <g class="t-node" data-id="${n.data.id}" transform="translate(${n.x},${n.y})">
         <circle r="${NODE_R+5}" fill="transparent" style="cursor:pointer"/>
         <circle r="${NODE_R}" fill="${photo?'#1e2130':col}" stroke="${col}" stroke-width="3" style="cursor:pointer"/>
         ${face}
+        ${heartBadge}
         <text y="${NODE_R+17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
               font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}</text>
         ${loc ? `<text y="${NODE_R+31}" text-anchor="middle" fill="#6b7a99"
               font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
-        <g class="add-child" data-parent="${n.data.id}" transform="translate(${NODE_R-6},${-NODE_R+6})">
+        <g class="add-rel" data-person="${n.data.id}" transform="translate(${NODE_R-6},${-NODE_R+6})">
           <circle r="14" fill="#10b981" stroke="#0f1117" stroke-width="2" style="cursor:pointer"/>
           <text text-anchor="middle" dominant-baseline="central" fill="white"
                 font-size="20" font-weight="700" font-family="system-ui" dy="1"
@@ -436,17 +598,17 @@ function treeRender() {
       </g>`;
   }).join('');
 
-  document.getElementById('tree-g').innerHTML = links + nodes;
+  document.getElementById('tree-g').innerHTML = links + spouseSvg + nodes;
 
   document.querySelectorAll('.t-node').forEach(el => {
     el.addEventListener('click', e => {
-      if (e.target.closest('.add-child')) return;
+      if (e.target.closest('.add-rel')) return;
       modalOpen({ personId: el.dataset.id, mode: 'view' });
     });
-    const btn = el.querySelector('.add-child');
+    const btn = el.querySelector('.add-rel');
     if (btn) btn.addEventListener('click', e => {
       e.stopPropagation();
-      modalOpen({ parentId: btn.dataset.parent, mode: 'add' });
+      relPickerOpen(btn.dataset.person);
     });
   });
 }
@@ -467,7 +629,7 @@ function mapRender() {
   leafMarkers.forEach(m => m.remove());
   leafMarkers = [];
 
-  const all     = Object.values(S.data.people);
+  const all     = Object.values(S.data.people).filter(p => !p.virtual);
   const located = all.filter(p => p.lat && p.lng);
   const hint    = document.getElementById('map-hint');
   const missing = all.length - located.length;
@@ -527,13 +689,69 @@ function navSwitch(view) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   RELATIONSHIP PICKER
+═══════════════════════════════════════════════════════════════ */
+function relPickerOpen(personId) {
+  S.relpick = { personId };
+  relPickerRender();
+}
+
+function relPickerClose() {
+  const el = document.getElementById('rel-overlay');
+  if (el) el.remove();
+  S.relpick = null;
+}
+
+function relPickerRender() {
+  const old = document.getElementById('rel-overlay');
+  if (old) old.remove();
+  if (!S.relpick) return;
+
+  const { personId } = S.relpick;
+  const p = S.data.people[personId];
+  const name = eh(p?.firstName || 'them');
+
+  const opts = [
+    { key:'child',   disabled: false },
+    { key:'spouse',  disabled: !!p?.spouseId },
+    { key:'sibling', disabled: false },
+    { key:'parent',  disabled: false },
+  ];
+
+  const btns = opts.map(o => `
+    <button class="rel-btn" onclick="relPickerSelect('${o.key}')"
+      ${o.disabled ? 'disabled' : ''}>
+      <span class="rel-btn-icon">${REL_ICONS[o.key]}</span>
+      <span class="rel-btn-label">${capitalize(REL_LABELS[o.key])}</span>
+      ${o.disabled ? '<span class="rel-btn-sub">Already set</span>' : ''}
+    </button>`).join('');
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="rel-overlay" onclick="if(event.target.id==='rel-overlay')relPickerClose()">
+      <div class="rel-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div class="rel-title">Add relative for <strong style="color:#c0c8d8">${name}</strong></div>
+        <div class="rel-grid">${btns}</div>
+        <button class="rel-cancel-btn" onclick="relPickerClose()">Cancel</button>
+      </div>
+    </div>`);
+}
+
+function relPickerSelect(relType) {
+  const { personId } = S.relpick;
+  relPickerClose();
+  modalOpen({ contextId: personId, relType, mode: 'add' });
+}
+
+/* ═══════════════════════════════════════════════════════════════
    MODAL
 ═══════════════════════════════════════════════════════════════ */
 function modalOpen(cfg) {
   const p = cfg.personId ? S.data.people[cfg.personId] : null;
   S.modal = {
-    personId:    cfg.personId || null,
-    parentId:    cfg.parentId || null,
+    personId:    cfg.personId  || null,
+    contextId:   cfg.contextId || null,
+    relType:     cfg.relType   || 'child',
     initMode:    cfg.mode,
     mode:        cfg.mode,
     form: p ? {
@@ -563,10 +781,11 @@ function modalRender() {
   if (old) old.remove();
   if (!S.modal) return;
 
-  const { mode, form, preview, saving, initMode } = S.modal;
+  const { mode, form, preview, saving, initMode, personId, contextId, relType } = S.modal;
   const isEdit  = mode==='edit' || initMode==='add';
   const isAdd   = initMode==='add';
-  const isRoot  = S.modal.personId === S.data.rootId;
+  const isRoot  = personId === S.data.rootId;
+  const p       = personId ? S.data.people[personId] : null;
   const dispName= [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Unnamed';
 
   const photoSec = `
@@ -588,8 +807,71 @@ function modalRender() {
                style="display:none" onchange="mPhotoChange(this)"/>` : ''}
     </div>`;
 
+  // Build relationship info rows for view mode
+  let relRows = '';
+  if (!isEdit && p && !p.virtual) {
+    const spouse   = p.spouseId ? S.data.people[p.spouseId] : null;
+    const parent   = p.parentId ? S.data.people[p.parentId] : null;
+    const visParent= parent && !parent.virtual ? parent : null;
+    const children = (p.children||[]).map(cid => S.data.people[cid]).filter(c => c && !c.virtual);
+    const siblings = visParent
+      ? (visParent.children||[]).filter(cid => cid !== p.id)
+          .map(cid => S.data.people[cid]).filter(c => c && !c.virtual)
+      : [];
+
+    const relParts = [];
+
+    if (spouse) {
+      const sName = [spouse.firstName, spouse.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      relParts.push(`<div class="view-row">
+        <span class="row-icon">♥</span>
+        <span>Spouse/Partner:&nbsp;
+          <button class="person-link" onclick="modalClose();modalOpen({personId:'${spouse.id}',mode:'view'})">${eh(sName)}</button>
+        </span></div>`);
+    }
+    if (visParent) {
+      const pName = [visParent.firstName, visParent.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      relParts.push(`<div class="view-row">
+        <span class="row-icon">👆</span>
+        <span>Parent:&nbsp;
+          <button class="person-link" onclick="modalClose();modalOpen({personId:'${visParent.id}',mode:'view'})">${eh(pName)}</button>
+        </span></div>`);
+    }
+    if (siblings.length) {
+      const sibLinks = siblings.map(s => {
+        const sn = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
+        return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${s.id}',mode:'view'})">${eh(sn)}</button>`;
+      }).join(', ');
+      relParts.push(`<div class="view-row">
+        <span class="row-icon">👫</span>
+        <span>Siblings: ${sibLinks}</span></div>`);
+    }
+    if (children.length) {
+      const childLinks = children.map(c => {
+        const cn = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unnamed';
+        return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${c.id}',mode:'view'})">${eh(cn)}</button>`;
+      }).join(', ');
+      relParts.push(`<div class="view-row">
+        <span class="row-icon">👶</span>
+        <span>Children: ${childLinks}</span></div>`);
+    }
+
+    if (relParts.length) {
+      relRows = `<div class="rel-section-title">Family</div>${relParts.join('')}<div class="section-sep"></div>`;
+    }
+  }
+
+  // Context label for add mode
+  let addCtx = '';
+  if (isAdd && contextId) {
+    const ctx = S.data.people[contextId];
+    const ctxName = [ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'person';
+    addCtx = `<div class="add-ctx">Adding <strong>${REL_ICONS[relType]} ${REL_LABELS[relType]}</strong> for ${eh(ctxName)}</div>`;
+  }
+
   const body = isEdit ? `
     <div class="modal-body">
+      ${addCtx}
       <div class="form-stack">
         <div class="form-pair">
           <input class="field" placeholder="First name"
@@ -607,11 +889,12 @@ function modalRender() {
     </div>` : `
     <div class="modal-body">
       <h2 class="view-name">${eh(dispName)}</h2>
+      ${relRows}
       ${form.location   ? `<div class="view-row"><span class="row-icon">📍</span><span>${eh(form.location)}</span></div>` : ''}
       ${form.occupation ? `<div class="view-row"><span class="row-icon">💼</span><span>${eh(form.occupation)}</span></div>` : ''}
       ${form.phone      ? `<div class="view-row"><span class="row-icon">📞</span>
           <a class="phone-link" href="tel:${ea(form.phone)}">${eh(form.phone)}</a></div>` : ''}
-      ${!form.location && !form.occupation && !form.phone
+      ${!relRows && !form.location && !form.occupation && !form.phone
         ? `<p class="no-details">No details yet — tap Edit to add some.</p>` : ''}
     </div>`;
 
@@ -636,7 +919,7 @@ function modalRender() {
     </div>`);
 }
 
-/* ── Modal action handlers (globals needed for inline onclick) ── */
+/* ── Modal action handlers ── */
 function mEdit()   { S.modal.mode='edit'; modalRender(); }
 function mCancel() {
   if (S.modal.initMode==='add') modalClose();
@@ -665,7 +948,7 @@ async function mSave() {
   modalRender();
 
   try {
-    const { form, personId, parentId, initMode, doRemove, pendingFile } = S.modal;
+    const { form, personId, contextId, relType, initMode, doRemove, pendingFile } = S.modal;
     let photoId = form.photoId;
 
     if (doRemove && photoId) {
@@ -697,7 +980,7 @@ async function mSave() {
       updates.lng = prevPerson?.lng ?? null;
     }
 
-    if (initMode==='add') personAdd(parentId, updates);
+    if (initMode==='add') personAddRel(contextId, relType, updates);
     else                  personUpdate(personId, updates);
 
     dataSave();
@@ -715,7 +998,10 @@ async function mDelete() {
   const { personId } = S.modal;
   const p    = S.data.people[personId];
   const name = [p?.firstName, p?.lastName].filter(Boolean).join(' ') || 'this person';
-  const msg  = (p?.children?.length > 0)
+  const desc = (p?.children||[]).filter(cid => {
+    const c = S.data.people[cid]; return c && !c.virtual;
+  }).length;
+  const msg = desc > 0
     ? `Delete "${name}" and all their descendants? This cannot be undone.`
     : `Delete "${name}"?`;
   if (!confirm(msg)) return;
@@ -731,7 +1017,7 @@ async function mDelete() {
    HEADER
 ═══════════════════════════════════════════════════════════════ */
 function headerUpdate() {
-  const n = Object.keys(S.data.people).length;
+  const n = Object.values(S.data.people).filter(p => !p.virtual).length;
   document.getElementById('member-count').textContent = `${n} ${n===1?'member':'members'}`;
 }
 
@@ -781,6 +1067,11 @@ function doImportClick() {
         S.photos = parsed.photos;
       }
       S.data = parsed.tree;
+      // Migrate imported data
+      Object.values(S.data.people).forEach(p => {
+        if (p.spouseId === undefined) p.spouseId = null;
+        if (p.virtual  === undefined) p.virtual  = false;
+      });
       dataSave();
       treeRender();
       headerUpdate();
@@ -792,9 +1083,10 @@ function doImportClick() {
 /* ═══════════════════════════════════════════════════════════════
    TINY UTILS
 ═══════════════════════════════════════════════════════════════ */
-function uid() { return crypto.randomUUID(); }
-function eh(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function ea(s) { return String(s||'').replace(/"/g,'&quot;'); }
+function uid()        { return crypto.randomUUID(); }
+function eh(s)        { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function ea(s)        { return String(s||'').replace(/"/g,'&quot;'); }
+function capitalize(s){ return s ? s[0].toUpperCase() + s.slice(1) : s; }
 </script>
 </body>
 </html>

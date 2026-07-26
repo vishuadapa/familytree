@@ -195,6 +195,12 @@ input.picker-search{width:100%}
 .leaflet-popup-close-button{color:#6b7a99!important}
 .leaflet-popup-content{margin:10px 14px}
 
+/* ── Tap hint ── */
+#tap-hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  background:rgba(15,17,23,.85);border:1px solid #2e3a56;color:#6b7a99;font-size:11px;
+  padding:5px 12px;border-radius:16px;pointer-events:none;white-space:nowrap;
+  backdrop-filter:blur(6px);z-index:5;transition:opacity .3s}
+
 @media(min-width:560px){
   .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
   #modal-overlay{align-items:center}
@@ -221,7 +227,9 @@ input.picker-search{width:100%}
       <svg id="tree-svg">
         <defs id="tree-defs"></defs>
         <g id="tree-g"></g>
+        <g id="tree-legend-fixed"></g>
       </svg>
+      <div id="tap-hint">Tap a person to highlight relatives · Tap again to view details</div>
     </div>
     <div id="map-view" style="display:none">
       <div id="leaflet-map"></div>
@@ -253,14 +261,22 @@ input.picker-search{width:100%}
 /* ═══════════════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
-const STORAGE_KEY = 'familytree_v1';
+const STORAGE_KEY = 'familytree_v2';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
-const H_GAP       = 130;
-const V_GAP       = 115;
-const COLORS = ['#4A90E2','#E67E22','#2ECC71','#9B59B6','#E74C3C','#1ABC9C','#F39C12','#e84393'];
+const V_GAP       = 145;
 
+/* Relationship colors */
+const RC = {
+  parent:  '#f97316',
+  child:   '#22c55e',
+  spouse:  '#ec4899',
+  sibling: '#a855f7',
+  self:    '#ffffff',
+};
+
+const COLORS = ['#4A90E2','#E67E22','#2ECC71','#9B59B6','#E74C3C','#1ABC9C','#F39C12','#e84393'];
 const REL_LABELS = { child:'child', spouse:'spouse / partner', sibling:'sibling', parent:'parent' };
 const REL_ICONS  = { child:'👶', spouse:'💑', sibling:'👫', parent:'👆' };
 
@@ -275,6 +291,9 @@ const S = {
   relpick:    null,
   linkpick:   null,
   personpick: null,
+  highlight:  null,  // id of currently highlighted person
+  _pos:       {},    // cached node positions {id: {x,y}}
+  _layoutDirty: true,
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -291,34 +310,98 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-export').addEventListener('click', doExport);
   document.getElementById('btn-import').addEventListener('click', doImportClick);
   document.getElementById('btn-fit').addEventListener('click', treeFit);
+
+  /* Clear highlight when tapping the SVG background */
+  document.getElementById('tree-svg').addEventListener('click', e => {
+    if (e.target === document.getElementById('tree-svg') ||
+        e.target === document.getElementById('tree-g')) {
+      if (S.highlight) { S.highlight = null; treeRender(); }
+    }
+  });
+
+  /* Hide tap hint after first interaction */
+  document.getElementById('tree-svg').addEventListener('click', () => {
+    const h = document.getElementById('tap-hint');
+    if (h) { h.style.opacity = '0'; setTimeout(() => h.remove(), 300); }
+  }, { once: true });
 });
+
+/* ═══════════════════════════════════════════════════════════════
+   MIGRATION  (v1 parentId/virtual  →  v2 parents[]/links[])
+═══════════════════════════════════════════════════════════════ */
+function migrateData(d) {
+  if (!d || !d.people) return;
+  if (d.links !== undefined) {
+    /* Already v2: ensure every person has parents[] */
+    Object.values(d.people).forEach(p => {
+      if (!Array.isArray(p.parents)) p.parents = [];
+      if (!Array.isArray(p.children)) p.children = [];
+      if (p.spouseId === undefined) p.spouseId = null;
+      delete p.virtual; delete p.parentId;
+    });
+    return;
+  }
+
+  const people = d.people;
+  const virtualIds = new Set(Object.values(people).filter(p => p.virtual).map(p => p.id));
+
+  /* Step 1: assign parents[] to real people */
+  Object.values(people).forEach(p => {
+    if (p.virtual) return;
+    if (!p.parentId || virtualIds.has(p.parentId)) {
+      /* parentId points at a virtual node: go one level up */
+      const vp = p.parentId ? people[p.parentId] : null;
+      p.parents = (vp && vp.parentId && !virtualIds.has(vp.parentId)) ? [vp.parentId] : [];
+    } else {
+      p.parents = [p.parentId];
+    }
+  });
+
+  /* Step 2: fix children[] on real nodes (remove virtual IDs, flatten) */
+  Object.values(people).forEach(p => {
+    if (p.virtual) return;
+    const fixed = [];
+    (p.children || []).forEach(cid => {
+      if (!virtualIds.has(cid)) { fixed.push(cid); return; }
+      const vp = people[cid];
+      if (vp) (vp.children || []).filter(c => !virtualIds.has(c)).forEach(c => fixed.push(c));
+    });
+    p.children = [...new Set(fixed)];
+  });
+
+  /* Step 3: fix rootId */
+  while (d.rootId && virtualIds.has(d.rootId)) {
+    const vp = people[d.rootId];
+    const real = (vp?.children || []).find(c => !virtualIds.has(c));
+    d.rootId = real || Object.keys(people).find(id => !virtualIds.has(id)) || d.rootId;
+    break;
+  }
+
+  /* Step 4: delete virtual nodes and old fields */
+  virtualIds.forEach(id => delete people[id]);
+  Object.values(people).forEach(p => { delete p.parentId; delete p.virtual; });
+
+  d.links = [];
+}
 
 /* ═══════════════════════════════════════════════════════════════
    LOCAL STORAGE
 ═══════════════════════════════════════════════════════════════ */
 function dataLoad() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
+  for (const key of [STORAGE_KEY, 'familytree_v1']) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
       const d = JSON.parse(raw);
-      // Migrate: ensure spouseId and virtual fields exist on old data
-      Object.values(d.people).forEach(p => {
-        if (p.spouseId === undefined) p.spouseId = null;
-        if (p.virtual  === undefined) p.virtual  = false;
-      });
+      migrateData(d);
       return d;
-    }
-  } catch {}
+    } catch {}
+  }
   const id = uid();
   return {
     rootId: id,
-    people: {
-      [id]: {
-        id, firstName:'You', lastName:'', location:'', lat:null, lng:null,
-        occupation:'', phone:'', photoId:null,
-        parentId:null, children:[], spouseId:null, virtual:false
-      }
-    }
+    people: { [id]: mkPerson(id, [], { firstName:'You' }) },
+    links: []
   };
 }
 function dataSave() { localStorage.setItem(STORAGE_KEY, JSON.stringify(S.data)); }
@@ -415,139 +498,123 @@ async function geocode(str) {
 /* ═══════════════════════════════════════════════════════════════
    CRUD
 ═══════════════════════════════════════════════════════════════ */
-
-function mkPerson(id, parentId, fields) {
+function mkPerson(id, parents, fields) {
   return {
-    id, parentId: parentId || null, children: [],
-    spouseId: null, virtual: false,
-    firstName:'', lastName:'', location:'', lat:null, lng:null,
-    occupation:'', phone:'', photoId:null,
+    id,
+    parents:    parents || [],
+    children:   [],
+    spouseId:   null,
+    firstName:  '',
+    lastName:   '',
+    location:   '',
+    lat:        null,
+    lng:        null,
+    occupation: '',
+    phone:      '',
+    photoId:    null,
     ...fields
   };
-}
-
-function mkVirtualRoot() {
-  const vpId = uid();
-  S.data.people[vpId] = mkPerson(vpId, null, { virtual: true });
-  return vpId;
 }
 
 function personAddRel(contextId, relType, fields) {
   const id  = uid();
   const ctx = S.data.people[contextId];
+  if (!ctx) return null;
 
   if (relType === 'child') {
-    S.data.people[id] = mkPerson(id, contextId, fields);
+    const parents = [contextId];
+    /* Smart: auto-add spouse as co-parent */
+    if (ctx.spouseId && S.data.people[ctx.spouseId]) {
+      parents.push(ctx.spouseId);
+      S.data.people[ctx.spouseId].children.push(id);
+    }
+    S.data.people[id] = mkPerson(id, parents, fields);
     ctx.children.push(id);
 
   } else if (relType === 'spouse') {
-    if (ctx.spouseId) return null; // already has spouse
-    let parentId = ctx.parentId;
-    if (!parentId) {
-      parentId = mkVirtualRoot();
-      S.data.people[parentId].children.push(contextId);
-      ctx.parentId = parentId;
-      S.data.rootId = parentId;
-    }
-    S.data.people[id] = mkPerson(id, parentId, { ...fields, spouseId: contextId });
-    S.data.people[parentId].children.push(id);
+    if (ctx.spouseId) return null;
+    S.data.people[id] = mkPerson(id, [], { ...fields, spouseId: contextId });
     ctx.spouseId = id;
 
   } else if (relType === 'sibling') {
-    let parentId = ctx.parentId;
-    if (!parentId) {
-      parentId = mkVirtualRoot();
-      S.data.people[parentId].children.push(contextId);
-      ctx.parentId = parentId;
-      S.data.rootId = parentId;
+    S.data.people[id] = mkPerson(id, [...(ctx.parents || [])], fields);
+    /* Add to all shared parents' children lists */
+    (ctx.parents || []).forEach(pid => {
+      const par = S.data.people[pid];
+      if (par && !par.children.includes(id)) par.children.push(id);
+    });
+    /* No shared parent: create explicit sibling link */
+    if (!ctx.parents.length) {
+      S.data.links.push({ type: 'sibling', a: contextId, b: id });
     }
-    S.data.people[id] = mkPerson(id, parentId, fields);
-    S.data.people[parentId].children.push(id);
 
   } else if (relType === 'parent') {
-    const oldParentId = ctx.parentId;
-    S.data.people[id] = mkPerson(id, oldParentId, { ...fields, children: [contextId] });
-    if (oldParentId && S.data.people[oldParentId]) {
-      const gp = S.data.people[oldParentId];
-      const idx = gp.children.indexOf(contextId);
-      if (idx >= 0) gp.children[idx] = id; else gp.children.push(id);
-    }
-    ctx.parentId = id;
+    S.data.people[id] = mkPerson(id, [], { ...fields, children: [contextId] });
+    if (!ctx.parents.includes(id)) ctx.parents.push(id);
     if (contextId === S.data.rootId) S.data.rootId = id;
   }
 
+  S._layoutDirty = true;
   return id;
 }
 
 function personUpdate(id, fields) { Object.assign(S.data.people[id], fields); }
 
+function removeFromParents(id) {
+  const p = S.data.people[id]; if (!p) return;
+  (p.parents || []).forEach(pid => {
+    const par = S.data.people[pid];
+    if (par) par.children = par.children.filter(c => c !== id);
+  });
+  p.parents = [];
+  S.data.links = (S.data.links || []).filter(l => l.a !== id && l.b !== id);
+}
+
 function personDelete(id) {
   function sweep(pid) {
     const p = S.data.people[pid]; if (!p) return;
-    if (p.spouseId && S.data.people[p.spouseId]) {
-      S.data.people[p.spouseId].spouseId = null;
-    }
-    (p.children||[]).forEach(sweep);
+    if (p.spouseId && S.data.people[p.spouseId]) S.data.people[p.spouseId].spouseId = null;
+    (p.parents || []).forEach(parentId => {
+      const par = S.data.people[parentId];
+      if (par) par.children = par.children.filter(c => c !== pid);
+    });
+    S.data.links = (S.data.links || []).filter(l => l.a !== pid && l.b !== pid);
+    const kids = [...(p.children || [])];
     delete S.data.people[pid];
+    kids.forEach(sweep);
   }
-  const p = S.data.people[id]; if (!p) return;
-  sweep(id);
-  if (p.parentId && S.data.people[p.parentId]) {
-    const par = S.data.people[p.parentId];
-    par.children = par.children.filter(c => c !== id);
-    // Clean up virtual parent if now empty or has only one visible child
-    if (par.virtual) {
-      if (par.children.length === 0) {
-        delete S.data.people[par.id];
-        if (S.data.rootId === par.id) {
-          const nid = uid();
-          S.data.rootId = nid;
-          S.data.people[nid] = mkPerson(nid, null, { firstName:'You' });
-        }
-      } else if (par.children.length === 1) {
-        const sole = par.children[0];
-        S.data.people[sole].parentId = par.parentId;
-        if (S.data.rootId === par.id) S.data.rootId = sole;
-        delete S.data.people[par.id];
-      }
-    }
-  }
-}
 
-function cleanupVirtual(parentId) {
-  const par = S.data.people[parentId];
-  if (!par || !par.virtual) return;
-  if (par.children.length === 0) {
-    delete S.data.people[par.id];
-    if (S.data.rootId === par.id) {
+  const p = S.data.people[id]; if (!p) return;
+  if (id === S.data.rootId) {
+    const newRoot = (p.children || [])[0]
+      || Object.keys(S.data.people).find(k => k !== id)
+      || null;
+    if (newRoot) S.data.rootId = newRoot;
+  }
+  sweep(id);
+
+  if (!S.data.people[S.data.rootId]) {
+    const remaining = Object.keys(S.data.people);
+    if (remaining.length) {
+      S.data.rootId = remaining[0];
+    } else {
       const nid = uid();
       S.data.rootId = nid;
-      S.data.people[nid] = mkPerson(nid, null, { firstName:'You' });
+      S.data.people[nid] = mkPerson(nid, [], { firstName: 'You' });
     }
-  } else if (par.children.length === 1) {
-    const sole = par.children[0];
-    S.data.people[sole].parentId = par.parentId;
-    if (S.data.rootId === par.id) S.data.rootId = sole;
-    delete S.data.people[par.id];
   }
-}
-
-function removeFromParent(id) {
-  const p = S.data.people[id]; if (!p || !p.parentId) return;
-  const par = S.data.people[p.parentId]; if (!par) return;
-  par.children = par.children.filter(c => c !== id);
-  p.parentId = null;
-  cleanupVirtual(par.id);
+  S._layoutDirty = true;
 }
 
 function getAncestors(id) {
   const result = new Set();
-  let cur = S.data.people[id];
-  const visited = new Set();
-  while (cur && cur.parentId && !visited.has(cur.id)) {
-    visited.add(cur.id);
-    result.add(cur.parentId);
-    cur = S.data.people[cur.parentId];
+  const queue  = [...(S.data.people[id]?.parents || [])];
+  while (queue.length) {
+    const pid = queue.shift();
+    if (result.has(pid)) continue;
+    result.add(pid);
+    const p = S.data.people[pid];
+    if (p) (p.parents || []).forEach(gid => { if (!result.has(gid)) queue.push(gid); });
   }
   return result;
 }
@@ -556,7 +623,7 @@ function getDescendants(id) {
   const result = new Set();
   function walk(pid) {
     const p = S.data.people[pid]; if (!p) return;
-    (p.children||[]).forEach(cid => { result.add(cid); walk(cid); });
+    (p.children || []).forEach(cid => { result.add(cid); walk(cid); });
   }
   walk(id);
   return result;
@@ -567,16 +634,17 @@ function getEligiblePeople(contextId, relType) {
   if (!ctx) return [];
   const ancestors   = getAncestors(contextId);
   const descendants = getDescendants(contextId);
-  const ctxParentChildren = ctx.parentId && S.data.people[ctx.parentId]
-    ? S.data.people[ctx.parentId].children || []
-    : [];
+  const ctxSibIds   = new Set(
+    (ctx.parents || []).flatMap(pid => (S.data.people[pid]?.children || []))
+      .filter(c => c !== contextId)
+  );
 
   return Object.values(S.data.people).filter(p => {
-    if (p.virtual || p.id === contextId) return false;
+    if (p.id === contextId) return false;
     if (relType === 'spouse')  return !ctx.spouseId && !p.spouseId;
-    if (relType === 'child')   return !ancestors.has(p.id) && !ctx.children.includes(p.id);
-    if (relType === 'parent')  return !descendants.has(p.id) && ctx.parentId !== p.id;
-    if (relType === 'sibling') return !ctxParentChildren.includes(p.id);
+    if (relType === 'child')   return !ancestors.has(p.id) && !(ctx.children||[]).includes(p.id);
+    if (relType === 'parent')  return !descendants.has(p.id) && !(ctx.parents||[]).includes(p.id);
+    if (relType === 'sibling') return !ctxSibIds.has(p.id);
     return true;
   });
 }
@@ -595,42 +663,42 @@ function linkExisting(contextId, relType, targetId) {
     if (getAncestors(contextId).has(targetId)) {
       alert('Cannot add: this would create a circular relationship.'); return;
     }
-    if (S.data.rootId === targetId) S.data.rootId = contextId;
-    removeFromParent(targetId);
-    tgt.parentId = contextId;
+    removeFromParents(targetId);
+    if (!tgt.parents.includes(contextId)) tgt.parents.push(contextId);
+    /* Auto-add spouse as co-parent */
+    if (ctx.spouseId && S.data.people[ctx.spouseId] && !tgt.parents.includes(ctx.spouseId)) {
+      tgt.parents.push(ctx.spouseId);
+      const sp = S.data.people[ctx.spouseId];
+      if (!sp.children.includes(targetId)) sp.children.push(targetId);
+    }
     if (!ctx.children.includes(targetId)) ctx.children.push(targetId);
+    if (S.data.rootId === targetId) S.data.rootId = contextId;
 
   } else if (relType === 'sibling') {
-    let parentId = ctx.parentId;
-    if (!parentId) {
-      parentId = mkVirtualRoot();
-      S.data.people[parentId].children.push(contextId);
-      ctx.parentId = parentId;
-      S.data.rootId = parentId;
+    removeFromParents(targetId);
+    tgt.parents = [...(ctx.parents || [])];
+    tgt.parents.forEach(pid => {
+      const par = S.data.people[pid];
+      if (par && !par.children.includes(targetId)) par.children.push(targetId);
+    });
+    if (!tgt.parents.length) {
+      const already = (S.data.links || []).some(l =>
+        l.type === 'sibling' &&
+        ((l.a === contextId && l.b === targetId) || (l.a === targetId && l.b === contextId))
+      );
+      if (!already) S.data.links.push({ type: 'sibling', a: contextId, b: targetId });
     }
-    if (S.data.rootId === targetId) S.data.rootId = parentId;
-    removeFromParent(targetId);
-    tgt.parentId = parentId;
-    if (!S.data.people[parentId].children.includes(targetId))
-      S.data.people[parentId].children.push(targetId);
 
   } else if (relType === 'parent') {
     if (getDescendants(contextId).has(targetId)) {
       alert('Cannot add: this would create a circular relationship.'); return;
     }
-    const oldParentId = ctx.parentId;
-    removeFromParent(targetId);
-    tgt.parentId = oldParentId;
-    if (oldParentId && S.data.people[oldParentId]) {
-      const gp = S.data.people[oldParentId];
-      const idx = gp.children.indexOf(contextId);
-      if (idx >= 0) gp.children[idx] = targetId; else gp.children.push(targetId);
-    }
-    ctx.parentId = targetId;
+    if (!ctx.parents.includes(targetId)) ctx.parents.push(targetId);
     if (!tgt.children.includes(contextId)) tgt.children.push(contextId);
     if (S.data.rootId === contextId) S.data.rootId = targetId;
   }
 
+  S._layoutDirty = true;
   dataSave();
   treeRender();
   headerUpdate();
@@ -638,32 +706,12 @@ function linkExisting(contextId, relType, targetId) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   COLOR HELPERS
+   COLOR HELPER (for map markers)
 ═══════════════════════════════════════════════════════════════ */
-function branchColor(d3node) {
-  if (!d3node) return COLORS[0];
-  if (d3node.depth === 0 || (d3node.depth === 1 && d3node.parent?.data?.virtual)) {
-    return COLORS[0];
-  }
-  let cur = d3node;
-  while (cur.parent && (cur.parent.depth > 0 && !cur.parent.data.virtual)) cur = cur.parent;
-  const idx = cur.parent?.children?.filter(c => !c.data.virtual).indexOf(cur) ?? 0;
-  return COLORS[(idx < 0 ? 0 : idx) % COLORS.length];
-}
-
-function personColor(personId) {
-  if (personId === S.data.rootId) return COLORS[0];
-  function walk(id, depth, bi) {
-    if (id === personId) return bi;
-    const p = S.data.people[id]; if (!p) return -1;
-    for (let i=0; i<(p.children||[]).length; i++) {
-      const r = walk(p.children[i], depth+1, depth===0 ? i : bi);
-      if (r !== -1) return r;
-    }
-    return -1;
-  }
-  const idx = walk(S.data.rootId, 0, 0);
-  return idx >= 0 ? COLORS[idx % COLORS.length] : COLORS[0];
+function personColor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xfffffff;
+  return COLORS[h % COLORS.length];
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -673,112 +721,280 @@ let treeZoom;
 
 function treeInit() {
   const svg = d3.select('#tree-svg');
-  treeZoom = d3.zoom().scaleExtent([0.1,4])
+  treeZoom = d3.zoom().scaleExtent([0.08, 4])
     .on('zoom', ({ transform }) => d3.select('#tree-g').attr('transform', transform));
   svg.call(treeZoom);
   const svgEl = document.getElementById('tree-svg');
-  const w = svgEl.clientWidth  || window.innerWidth;
+  const w = svgEl.clientWidth || window.innerWidth;
   const h = svgEl.clientHeight || (window.innerHeight - 112);
-  svg.call(treeZoom.transform, d3.zoomIdentity.translate(w/2, 90));
+  svg.call(treeZoom.transform, d3.zoomIdentity.translate(w / 2, h * 0.35));
+}
+
+/* BFS generation assignment */
+function assignGenerations() {
+  const people = S.data.people;
+  const gen    = {};
+  const queue  = [{ id: S.data.rootId, g: 0 }];
+  const visited = new Set();
+
+  while (queue.length) {
+    const { id, g } = queue.shift();
+    if (visited.has(id) || !people[id]) continue;
+    visited.add(id);
+    gen[id] = g;
+    const p = people[id];
+    if (p.spouseId && !visited.has(p.spouseId))
+      queue.push({ id: p.spouseId, g });
+    (p.children || []).forEach(c => { if (!visited.has(c)) queue.push({ id: c, g: g + 1 }); });
+    (p.parents  || []).forEach(par => { if (!visited.has(par)) queue.push({ id: par, g: g - 1 }); });
+  }
+  /* Handle disconnected people */
+  Object.keys(people).forEach(id => { if (!(id in gen)) gen[id] = 0; });
+  return gen;
+}
+
+/* Force-simulation layout. Returns nodeById map. Caches to S._pos. */
+function layoutNodes(gen) {
+  const people = S.data.people;
+  const ids    = Object.keys(people);
+  if (!ids.length) return {};
+
+  const nodes = ids.map(id => ({
+    id,
+    gen: gen[id] ?? 0,
+    x:  S._pos[id] ? S._pos[id].x : (Math.random() - 0.5) * Math.max(ids.length * 60, 200),
+    y:  (gen[id] ?? 0) * V_GAP,
+  }));
+
+  const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+  const spouseLinks = [];
+  const parentLinks = [];
+  const seenSp = new Set();
+  ids.forEach(id => {
+    const p = people[id];
+    if (p.spouseId && nodeById[p.spouseId] && !seenSp.has(id + p.spouseId)) {
+      spouseLinks.push({ source: nodeById[id], target: nodeById[p.spouseId] });
+      seenSp.add(id + p.spouseId); seenSp.add(p.spouseId + id);
+    }
+    (p.children || []).forEach(cid => {
+      if (nodeById[cid]) parentLinks.push({ source: nodeById[id], target: nodeById[cid] });
+    });
+  });
+
+  d3.forceSimulation(nodes)
+    .force('y',       d3.forceY(d => d.gen * V_GAP).strength(1.0))
+    .force('x',       d3.forceX(0).strength(0.04))
+    .force('collide', d3.forceCollide(NODE_R * 3.0).strength(0.85))
+    .force('spouse',  d3.forceLink(spouseLinks).distance(NODE_R * 2 + 24).strength(0.95))
+    .force('parent',  d3.forceLink(parentLinks).distance(V_GAP * 0.72).strength(0.18))
+    .alphaDecay(0.025)
+    .stop()
+    .tick(300);
+
+  nodes.forEach(n => { S._pos[n.id] = { x: n.x, y: n.y }; });
+  return nodeById;
+}
+
+/* Compute which nodes are highlighted relatives of `id` */
+function computeHighlight(id) {
+  const p = S.data.people[id];
+  if (!p) return null;
+  const h = {
+    self:     new Set([id]),
+    parents:  new Set(p.parents || []),
+    children: new Set(p.children || []),
+    spouses:  new Set(),
+    siblings: new Set(),
+  };
+  if (p.spouseId) h.spouses.add(p.spouseId);
+  (p.parents || []).forEach(pid => {
+    (S.data.people[pid]?.children || []).filter(c => c !== id).forEach(c => h.siblings.add(c));
+  });
+  (S.data.links || []).forEach(lk => {
+    if (lk.type !== 'sibling') return;
+    if (lk.a === id) h.siblings.add(lk.b);
+    if (lk.b === id) h.siblings.add(lk.a);
+  });
+  return h;
 }
 
 function treeRender() {
-  function buildHier(id) {
-    const p = S.data.people[id]; if (!p) return null;
-    return { ...p, children: (p.children||[]).map(buildHier).filter(Boolean) };
-  }
-  const hier = buildHier(S.data.rootId);
-  if (!hier) return;
+  const people = S.data.people;
+  const ids    = Object.keys(people);
+  if (!ids.length) return;
 
-  const root = d3.hierarchy(hier);
-  d3.tree().nodeSize([H_GAP, V_GAP])(root);
+  /* Re-run layout only when data changed */
+  const gen      = assignGenerations();
+  const nodeById = S._layoutDirty ? layoutNodes(gen) : (() => {
+    /* Rebuild nodeById from cached positions */
+    const nb = {};
+    ids.forEach(id => {
+      if (!S._pos[id]) { S._layoutDirty = true; }
+      nb[id] = { id, gen: gen[id] ?? 0, x: (S._pos[id] || {}).x || 0, y: (S._pos[id] || {}).y || 0 };
+    });
+    if (S._layoutDirty) return layoutNodes(gen);
+    return nb;
+  })();
+  S._layoutDirty = false;
 
-  const diagonal = d3.linkVertical().x(d => d.x).y(d => d.y);
-
-  // Clip paths for photos
-  document.getElementById('tree-defs').innerHTML = root.descendants()
-    .filter(n => !n.data.virtual && n.data.photoId && S.photos[n.data.photoId])
-    .map(n => `<clipPath id="cp-${n.data.id}"><circle r="${NODE_R}"/></clipPath>`)
+  /* Clip paths for photos */
+  document.getElementById('tree-defs').innerHTML = ids
+    .filter(id => people[id].photoId && S.photos[people[id].photoId])
+    .map(id => `<clipPath id="cp-${id}"><circle r="${NODE_R}"/></clipPath>`)
     .join('');
 
-  // Regular links — skip links FROM virtual nodes
-  const links = root.links()
-    .filter(lk => !lk.source.data.virtual)
-    .map(lk => {
-      const col = branchColor(lk.target);
-      return `<path d="${diagonal(lk)}" fill="none" stroke="${col}" stroke-width="2.5" stroke-opacity=".55"/>`;
-    }).join('');
+  const hl = S.highlight ? computeHighlight(S.highlight) : null;
 
-  // Spouse links — one per couple
-  const seenSpouse = new Set();
-  const spouseSvg = root.descendants()
-    .filter(n => !n.data.virtual && n.data.spouseId && !seenSpouse.has(n.data.id))
-    .map(n => {
-      const sNode = root.descendants().find(d => d.data.id === n.data.spouseId);
-      if (!sNode) return '';
-      seenSpouse.add(n.data.id);
-      seenSpouse.add(n.data.spouseId);
-      const mx = (n.x + sNode.x) / 2, my = (n.y + sNode.y) / 2;
-      return `<line x1="${n.x}" y1="${n.y}" x2="${sNode.x}" y2="${sNode.y}"
-        stroke="#e84393" stroke-width="2.5" stroke-dasharray="5,4" stroke-opacity=".75"/>
-        <text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="central"
-          font-size="13" font-family="system-ui" fill="#e84393"
-          stroke="#0f1117" stroke-width="3" paint-order="stroke">♥</text>`;
-    }).join('');
+  /* ── LINKS ── */
+  let svg = '';
 
-  // Nodes
-  const nodes = root.descendants().map(n => {
-    // Virtual nodes are invisible pass-throughs
-    if (n.data.virtual) {
-      return `<g data-id="${n.data.id}" transform="translate(${n.x},${n.y})"></g>`;
+  /* Spouse links */
+  const seenSp = new Set();
+  ids.forEach(id => {
+    const p = people[id];
+    if (!p.spouseId || seenSp.has(id)) return;
+    const n1 = nodeById[id], n2 = nodeById[p.spouseId];
+    if (!n1 || !n2) return;
+    seenSp.add(id); seenSp.add(p.spouseId);
+    const mx = (n1.x + n2.x) / 2, my = (n1.y + n2.y) / 2;
+    svg += `<line x1="${n1.x}" y1="${n1.y}" x2="${n2.x}" y2="${n2.y}"
+      stroke="${RC.spouse}" stroke-width="2.5" stroke-dasharray="6,4" stroke-linecap="round"/>`;
+    svg += `<text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="central"
+      font-size="14" font-family="system-ui" fill="${RC.spouse}"
+      stroke="#0f1117" stroke-width="3" paint-order="stroke">♥</text>`;
+  });
+
+  /* Parent → child connections */
+  const drawnBus = new Set();
+  ids.forEach(id => {
+    const p = people[id];
+    const src = nodeById[id]; if (!src) return;
+    const children = (p.children || []).filter(c => nodeById[c]);
+    if (!children.length) return;
+
+    const spouseNode = p.spouseId ? nodeById[p.spouseId] : null;
+
+    /* Shared children (both parents present) */
+    const sharedKids = spouseNode ? children.filter(cid =>
+      (people[cid]?.parents || []).includes(p.spouseId)
+    ) : [];
+    const soleKids = children.filter(c => !sharedKids.includes(c));
+
+    /* Bus-bar for couple's shared children */
+    if (sharedKids.length && spouseNode) {
+      const pairKey = [id, p.spouseId].sort().join('|');
+      if (!drawnBus.has(pairKey)) {
+        drawnBus.add(pairKey);
+        const midX  = (src.x + spouseNode.x) / 2;
+        const dropY = src.y + V_GAP * 0.40;
+        const childNodes = sharedKids.map(c => nodeById[c]).filter(Boolean);
+        const xs = childNodes.map(c => c.x);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+
+        svg += `<line x1="${midX}" y1="${src.y + NODE_R + 2}" x2="${midX}" y2="${dropY}"
+          stroke="${RC.parent}" stroke-width="2.5" stroke-linecap="round"/>`;
+        if (childNodes.length > 1) {
+          svg += `<line x1="${minX}" y1="${dropY}" x2="${maxX}" y2="${dropY}"
+            stroke="${RC.parent}" stroke-width="2.5"/>`;
+        }
+        childNodes.forEach(cn => {
+          svg += `<line x1="${cn.x}" y1="${dropY}" x2="${cn.x}" y2="${cn.y - NODE_R - 2}"
+            stroke="${RC.parent}" stroke-width="2.5" stroke-linecap="round"/>`;
+        });
+      }
     }
 
-    const col   = branchColor(n);
-    const photo = n.data.photoId ? S.photos[n.data.photoId] : null;
-    const init  = ((n.data.firstName||'')[0]+(n.data.lastName||'')[0]).toUpperCase() || '?';
-    const name  = [n.data.firstName, n.data.lastName].filter(Boolean).join(' ');
-    const loc   = n.data.location ? n.data.location.split(',')[0] : '';
-    const hasSpouse = !!n.data.spouseId;
+    /* Elbow for sole-parent children */
+    soleKids.forEach(cid => {
+      const cn = nodeById[cid]; if (!cn) return;
+      const midY = (src.y + cn.y) / 2;
+      svg += `<path d="M${src.x},${src.y + NODE_R + 2} V${midY} H${cn.x} V${cn.y - NODE_R - 2}"
+        fill="none" stroke="${RC.parent}" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round"/>`;
+    });
+  });
 
+  /* Explicit sibling links (no shared parent) */
+  (S.data.links || []).forEach(lk => {
+    if (lk.type !== 'sibling') return;
+    const n1 = nodeById[lk.a], n2 = nodeById[lk.b];
+    if (!n1 || !n2) return;
+    const cp = Math.abs(n2.y - n1.y) * 0.45 + 30;
+    svg += `<path d="M${n1.x},${n1.y} C${n1.x},${n1.y + cp} ${n2.x},${n2.y - cp} ${n2.x},${n2.y}"
+      fill="none" stroke="${RC.sibling}" stroke-width="2" stroke-dasharray="5,4"/>`;
+  });
+
+  /* ── NODES ── */
+  ids.forEach(id => {
+    const p  = people[id];
+    const n  = nodeById[id]; if (!n) return;
+    const photo = p.photoId ? S.photos[p.photoId] : null;
+    const init  = ((p.firstName || '')[0] + (p.lastName || '')[0]).toUpperCase() || '?';
+    const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+    const loc   = p.location ? p.location.split(',')[0] : '';
+    const isRoot = id === S.data.rootId;
+
+    /* Highlight ring */
+    let ringColor = 'none';
+    let nodeOpacity = 1;
+    if (hl) {
+      if (hl.self.has(id))          ringColor = RC.self;
+      else if (hl.parents.has(id))  ringColor = RC.parent;
+      else if (hl.children.has(id)) ringColor = RC.child;
+      else if (hl.spouses.has(id))  ringColor = RC.spouse;
+      else if (hl.siblings.has(id)) ringColor = RC.sibling;
+      else nodeOpacity = 0.22;
+    }
+
+    const baseColor = isRoot ? '#6366f1' : '#4A90E2';
     const face = photo
-      ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}" width="${NODE_R*2}" height="${NODE_R*2}"
-             clip-path="url(#cp-${n.data.id})" preserveAspectRatio="xMidYMid slice"/>`
+      ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}"
+           width="${NODE_R*2}" height="${NODE_R*2}"
+           clip-path="url(#cp-${id})" preserveAspectRatio="xMidYMid slice"/>`
       : `<text text-anchor="middle" dominant-baseline="central" fill="white"
-             font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
-             pointer-events="none">${eh(init)}</text>`;
+           font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
+           pointer-events="none">${eh(init)}</text>`;
 
-    const heartBadge = hasSpouse
-      ? `<text x="${-NODE_R+8}" y="${-NODE_R+8}" text-anchor="middle" dominant-baseline="central"
-           font-size="12" font-family="system-ui" fill="#e84393"
-           stroke="#0f1117" stroke-width="2.5" paint-order="stroke"
-           pointer-events="none">♥</text>`
-      : '';
-
-    return `
-      <g class="t-node" data-id="${n.data.id}" transform="translate(${n.x},${n.y})">
-        <circle r="${NODE_R+5}" fill="transparent" style="cursor:pointer"/>
-        <circle r="${NODE_R}" fill="${photo?'#1e2130':col}" stroke="${col}" stroke-width="3" style="cursor:pointer"/>
+    svg += `
+      <g class="t-node" data-id="${id}" transform="translate(${n.x},${n.y})"
+         style="opacity:${nodeOpacity};cursor:pointer">
+        <circle class="h-ring" r="${NODE_R + 7}" fill="none"
+          stroke="${ringColor}" stroke-width="3.5" pointer-events="none"/>
+        <circle r="${NODE_R + 5}" fill="transparent"/>
+        <circle r="${NODE_R}" fill="${photo ? '#1e2130' : baseColor}"
+          stroke="${isRoot ? '#818cf8' : baseColor}" stroke-width="2.5"/>
         ${face}
-        ${heartBadge}
-        <text y="${NODE_R+17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
-              font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}</text>
-        ${loc ? `<text y="${NODE_R+31}" text-anchor="middle" fill="#6b7a99"
-              font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
-        <g class="add-rel" data-person="${n.data.id}" transform="translate(${NODE_R-6},${-NODE_R+6})">
-          <circle r="14" fill="#10b981" stroke="#0f1117" stroke-width="2" style="cursor:pointer"/>
+        <text y="${NODE_R + 17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
+          font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}</text>
+        ${loc ? `<text y="${NODE_R + 30}" text-anchor="middle" fill="#6b7a99"
+          font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
+        <g class="add-rel" data-person="${id}" transform="translate(${NODE_R - 5},${-NODE_R + 5})">
+          <circle r="13" fill="#10b981" stroke="#0f1117" stroke-width="2"/>
           <text text-anchor="middle" dominant-baseline="central" fill="white"
-                font-size="20" font-weight="700" font-family="system-ui" dy="1"
-                pointer-events="none">+</text>
+            font-size="19" font-weight="700" font-family="system-ui" dy="1"
+            pointer-events="none">+</text>
         </g>
       </g>`;
-  }).join('');
+  });
 
-  document.getElementById('tree-g').innerHTML = links + spouseSvg + nodes;
+  document.getElementById('tree-g').innerHTML = svg;
 
+  /* Event listeners */
   document.querySelectorAll('.t-node').forEach(el => {
+    const pid = el.dataset.id;
     el.addEventListener('click', e => {
       if (e.target.closest('.add-rel')) return;
-      modalOpen({ personId: el.dataset.id, mode: 'view' });
+      if (S.highlight === pid) {
+        /* Second tap: open detail modal */
+        S.highlight = null;
+        treeRender();
+        modalOpen({ personId: pid, mode: 'view' });
+      } else {
+        /* First tap: highlight */
+        S.highlight = pid;
+        treeRender();
+      }
     });
     const btn = el.querySelector('.add-rel');
     if (btn) btn.addEventListener('click', e => {
@@ -786,6 +1002,30 @@ function treeRender() {
       relPickerOpen(btn.dataset.person);
     });
   });
+
+  /* Legend (fixed, not pannable) */
+  const legendItems = [
+    [RC.parent,  'Parent → Child',     false],
+    [RC.spouse,  'Spouse / Partner',   true],
+    [RC.sibling, 'Sibling',            true],
+    [RC.child,   'Child (ring)',        false],
+    [RC.parent,  'Parent (ring)',       false],
+  ];
+  const legendH = 14 + legendItems.length * 20 + 8;
+  const legendSvg = `
+    <rect rx="8" ry="8" x="0" y="0" width="168" height="${legendH}"
+      fill="#12151f" fill-opacity="0.92" stroke="#2e3a56"/>
+    <text x="10" y="14" font-size="10" font-weight="700" fill="#6b7a99"
+      font-family="system-ui" letter-spacing=".8">LEGEND</text>
+    ${legendItems.map(([c, label, dashed], i) => `
+      <line x1="10" y1="${26 + i*20}" x2="30" y2="${26 + i*20}"
+        stroke="${c}" stroke-width="2.5" ${dashed ? 'stroke-dasharray="5,3"' : ''}/>
+      <text x="36" y="${30 + i*20}" font-size="11" fill="#8892a4"
+        font-family="system-ui">${label}</text>
+    `).join('')}`;
+
+  document.getElementById('tree-legend-fixed').innerHTML =
+    `<g transform="translate(10,10)">${legendSvg}</g>`;
 }
 
 function treeFit() {
@@ -798,9 +1038,9 @@ function treeFit() {
     const w = svg.clientWidth  || window.innerWidth;
     const h = svg.clientHeight || (window.innerHeight - 112);
     const pad = 80;
-    const scale = Math.min((w - pad*2) / bbox.width, (h - pad*2) / bbox.height, 1.2);
+    const scale = Math.min((w - pad*2) / bbox.width, (h - pad*2) / bbox.height, 1.5);
     const tx = w/2 - (bbox.x + bbox.width/2) * scale;
-    const ty = pad - bbox.y * scale;
+    const ty = h/2 - (bbox.y + bbox.height/2) * scale;
     d3.select('#tree-svg').transition().duration(500)
       .call(treeZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
   } catch {}
@@ -822,7 +1062,7 @@ function mapRender() {
   leafMarkers.forEach(m => m.remove());
   leafMarkers = [];
 
-  const all     = Object.values(S.data.people).filter(p => !p.virtual);
+  const all     = Object.values(S.data.people);
   const located = all.filter(p => p.lat && p.lng);
   const hint    = document.getElementById('map-hint');
   const missing = all.length - located.length;
@@ -890,35 +1130,28 @@ function relPickerOpen(personId) {
 }
 
 function relPickerClose() {
-  const el = document.getElementById('rel-overlay');
-  if (el) el.remove();
+  document.getElementById('rel-overlay')?.remove();
   S.relpick = null;
 }
 
 function relPickerRender() {
-  const old = document.getElementById('rel-overlay');
-  if (old) old.remove();
+  document.getElementById('rel-overlay')?.remove();
   if (!S.relpick) return;
-
   const { personId } = S.relpick;
   const p = S.data.people[personId];
   const name = eh(p?.firstName || 'them');
-
   const opts = [
     { key:'child',   disabled: false },
     { key:'spouse',  disabled: !!p?.spouseId },
     { key:'sibling', disabled: false },
     { key:'parent',  disabled: false },
   ];
-
   const btns = opts.map(o => `
-    <button class="rel-btn" onclick="relPickerSelect('${o.key}')"
-      ${o.disabled ? 'disabled' : ''}>
+    <button class="rel-btn" onclick="relPickerSelect('${o.key}')" ${o.disabled?'disabled':''}>
       <span class="rel-btn-icon">${REL_ICONS[o.key]}</span>
       <span class="rel-btn-label">${capitalize(REL_LABELS[o.key])}</span>
       ${o.disabled ? '<span class="rel-btn-sub">Already set</span>' : ''}
     </button>`).join('');
-
   document.body.insertAdjacentHTML('beforeend', `
     <div id="rel-overlay" onclick="if(event.target.id==='rel-overlay')relPickerClose()">
       <div class="rel-sheet" onclick="event.stopPropagation()">
@@ -934,11 +1167,8 @@ function relPickerSelect(relType) {
   const { personId } = S.relpick;
   relPickerClose();
   const eligible = getEligiblePeople(personId, relType);
-  if (eligible.length > 0) {
-    linkChoiceOpen(personId, relType, eligible.length);
-  } else {
-    modalOpen({ contextId: personId, relType, mode: 'add' });
-  }
+  if (eligible.length > 0) linkChoiceOpen(personId, relType, eligible.length);
+  else modalOpen({ contextId: personId, relType, mode: 'add' });
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -946,7 +1176,7 @@ function relPickerSelect(relType) {
 ═══════════════════════════════════════════════════════════════ */
 function linkChoiceOpen(contextId, relType, eligibleCount) {
   S.linkpick = { contextId, relType, eligibleCount };
-  const ctx = S.data.people[contextId];
+  const ctx  = S.data.people[contextId];
   const name = eh([ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'them');
   document.getElementById('link-choice-overlay')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
@@ -980,26 +1210,16 @@ function linkChoiceClose() {
   document.getElementById('link-choice-overlay')?.remove();
   S.linkpick = null;
 }
-
-function linkChoiceNew() {
-  const { contextId, relType } = S.linkpick;
-  linkChoiceClose();
-  modalOpen({ contextId, relType, mode: 'add' });
-}
-
-function linkChoiceExisting() {
-  const { contextId, relType } = S.linkpick;
-  linkChoiceClose();
-  personPickerOpen(contextId, relType);
-}
+function linkChoiceNew()      { const {contextId,relType}=S.linkpick; linkChoiceClose(); modalOpen({contextId,relType,mode:'add'}); }
+function linkChoiceExisting() { const {contextId,relType}=S.linkpick; linkChoiceClose(); personPickerOpen(contextId,relType); }
 
 /* ═══════════════════════════════════════════════════════════════
-   PERSON PICKER (searchable list of existing people)
+   PERSON PICKER
 ═══════════════════════════════════════════════════════════════ */
 function personPickerOpen(contextId, relType) {
   S.personpick = { contextId, relType, search: '' };
-  const ctx = S.data.people[contextId];
-  const ctxName = eh([ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'person');
+  const ctx    = S.data.people[contextId];
+  const ctxName = eh([ctx?.firstName,ctx?.lastName].filter(Boolean).join(' ') || 'person');
   document.getElementById('person-picker-overlay')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
     <div id="person-picker-overlay" onclick="if(event.target.id==='person-picker-overlay')personPickerClose()">
@@ -1016,44 +1236,30 @@ function personPickerOpen(contextId, relType) {
   personPickerUpdateList();
 }
 
-function personPickerClose() {
-  document.getElementById('person-picker-overlay')?.remove();
-  S.personpick = null;
-}
-
-function personPickerSearch(term) {
-  if (!S.personpick) return;
-  S.personpick.search = term;
-  personPickerUpdateList();
-}
+function personPickerClose()        { document.getElementById('person-picker-overlay')?.remove(); S.personpick = null; }
+function personPickerSearch(term)   { if (!S.personpick) return; S.personpick.search = term; personPickerUpdateList(); }
 
 function personPickerUpdateList() {
   const { contextId, relType, search } = S.personpick;
   const listEl = document.getElementById('picker-list');
   if (!listEl) return;
-
   const eligible = getEligiblePeople(contextId, relType);
-  const term = search.trim().toLowerCase();
+  const term     = search.trim().toLowerCase();
   const filtered = term
-    ? eligible.filter(p =>
-        [p.firstName, p.lastName, p.location, p.occupation]
-          .some(f => f?.toLowerCase().includes(term)))
+    ? eligible.filter(p => [p.firstName,p.lastName,p.location,p.occupation]
+        .some(f => f?.toLowerCase().includes(term)))
     : eligible;
-
   if (!filtered.length) {
     listEl.innerHTML = `<div class="picker-empty">${term ? 'No matches' : 'No eligible people to link'}</div>`;
     return;
   }
-
-  const sorted = [...filtered].sort((a, b) =>
-    (a.firstName||'').localeCompare(b.firstName||''));
-
+  const sorted = [...filtered].sort((a,b) => (a.firstName||'').localeCompare(b.firstName||''));
   listEl.innerHTML = sorted.map(p => {
     const col   = personColor(p.id);
     const photo = p.photoId ? S.photos[p.photoId] : null;
     const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
-    const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
-    const sub   = [p.occupation, p.location].filter(Boolean).join(' · ');
+    const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+    const sub   = [p.occupation,p.location].filter(Boolean).join(' · ');
     const avStyle = photo
       ? `background:#1e2130;background-image:url('${photo}');background-size:cover;background-position:center`
       : `background:${col}`;
@@ -1105,14 +1311,12 @@ function modalOpen(cfg) {
 }
 
 function modalClose() {
-  const el = document.getElementById('modal-overlay');
-  if (el) el.remove();
+  document.getElementById('modal-overlay')?.remove();
   S.modal = null;
 }
 
 function modalRender() {
-  const old = document.getElementById('modal-overlay');
-  if (old) old.remove();
+  document.getElementById('modal-overlay')?.remove();
   if (!S.modal) return;
 
   const { mode, form, preview, saving, initMode, personId, contextId, relType } = S.modal;
@@ -1141,65 +1345,64 @@ function modalRender() {
                style="display:none" onchange="mPhotoChange(this)"/>` : ''}
     </div>`;
 
-  // Build relationship info rows for view mode
+  /* Relationship rows for view mode */
   let relRows = '';
-  if (!isEdit && p && !p.virtual) {
-    const spouse   = p.spouseId ? S.data.people[p.spouseId] : null;
-    const parent   = p.parentId ? S.data.people[p.parentId] : null;
-    const visParent= parent && !parent.virtual ? parent : null;
-    const children = (p.children||[]).map(cid => S.data.people[cid]).filter(c => c && !c.virtual);
-    const siblings = visParent
-      ? (visParent.children||[]).filter(cid => cid !== p.id)
-          .map(cid => S.data.people[cid]).filter(c => c && !c.virtual)
-      : [];
+  if (!isEdit && p) {
+    const parentsArr  = (p.parents || []).map(pid => S.data.people[pid]).filter(Boolean);
+    const childrenArr = (p.children || []).map(cid => S.data.people[cid]).filter(Boolean);
+    const spouse      = p.spouseId ? S.data.people[p.spouseId] : null;
+    const siblingIds  = new Set(
+      parentsArr.flatMap(par => (par.children || []).filter(c => c !== p.id))
+    );
+    (S.data.links || []).forEach(lk => {
+      if (lk.type !== 'sibling') return;
+      if (lk.a === p.id) siblingIds.add(lk.b);
+      if (lk.b === p.id) siblingIds.add(lk.a);
+    });
+    const siblingsArr = [...siblingIds].map(sid => S.data.people[sid]).filter(Boolean);
 
     const relParts = [];
-
     if (spouse) {
       const sName = [spouse.firstName, spouse.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      relParts.push(`<div class="view-row">
+      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.spouse};padding-left:10px">
         <span class="row-icon">♥</span>
         <span>Spouse/Partner:&nbsp;
           <button class="person-link" onclick="modalClose();modalOpen({personId:'${spouse.id}',mode:'view'})">${eh(sName)}</button>
         </span></div>`);
     }
-    if (visParent) {
-      const pName = [visParent.firstName, visParent.lastName].filter(Boolean).join(' ') || 'Unnamed';
-      relParts.push(`<div class="view-row">
+    parentsArr.forEach(par => {
+      const pName = [par.firstName, par.lastName].filter(Boolean).join(' ') || 'Unnamed';
+      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px">
         <span class="row-icon">👆</span>
         <span>Parent:&nbsp;
-          <button class="person-link" onclick="modalClose();modalOpen({personId:'${visParent.id}',mode:'view'})">${eh(pName)}</button>
+          <button class="person-link" onclick="modalClose();modalOpen({personId:'${par.id}',mode:'view'})">${eh(pName)}</button>
         </span></div>`);
-    }
-    if (siblings.length) {
-      const sibLinks = siblings.map(s => {
+    });
+    if (siblingsArr.length) {
+      const links = siblingsArr.map(s => {
         const sn = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
         return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${s.id}',mode:'view'})">${eh(sn)}</button>`;
       }).join(', ');
-      relParts.push(`<div class="view-row">
+      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.sibling};padding-left:10px">
         <span class="row-icon">👫</span>
-        <span>Siblings: ${sibLinks}</span></div>`);
+        <span>Siblings: ${links}</span></div>`);
     }
-    if (children.length) {
-      const childLinks = children.map(c => {
+    if (childrenArr.length) {
+      const links = childrenArr.map(c => {
         const cn = [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unnamed';
         return `<button class="person-link" onclick="modalClose();modalOpen({personId:'${c.id}',mode:'view'})">${eh(cn)}</button>`;
       }).join(', ');
-      relParts.push(`<div class="view-row">
+      relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.child};padding-left:10px">
         <span class="row-icon">👶</span>
-        <span>Children: ${childLinks}</span></div>`);
+        <span>Children: ${links}</span></div>`);
     }
-
-    if (relParts.length) {
-      relRows = `<div class="rel-section-title">Family</div>${relParts.join('')}<div class="section-sep"></div>`;
-    }
+    if (relParts.length) relRows = `<div class="rel-section-title">Family</div>${relParts.join('')}<div class="section-sep"></div>`;
   }
 
-  // Context label for add mode
   let addCtx = '';
   if (isAdd && contextId) {
-    const ctx = S.data.people[contextId];
-    const ctxName = [ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'person';
+    const ctx     = S.data.people[contextId];
+    const ctxName = [ctx?.firstName,ctx?.lastName].filter(Boolean).join(' ') || 'person';
     addCtx = `<div class="add-ctx">Adding <strong>${REL_ICONS[relType]} ${REL_LABELS[relType]}</strong> for ${eh(ctxName)}</div>`;
   }
 
@@ -1253,12 +1456,9 @@ function modalRender() {
     </div>`);
 }
 
-/* ── Modal action handlers ── */
+/* ── Modal actions ── */
 function mEdit()   { S.modal.mode='edit'; modalRender(); }
-function mCancel() {
-  if (S.modal.initMode==='add') modalClose();
-  else { S.modal.mode='view'; modalRender(); }
-}
+function mCancel() { if (S.modal.initMode==='add') modalClose(); else { S.modal.mode='view'; modalRender(); } }
 
 function mPhotoChange(input) {
   const file = input.files?.[0]; if (!file) return;
@@ -1280,48 +1480,32 @@ async function mSave() {
   if (S.modal.saving) return;
   S.modal.saving = true;
   modalRender();
-
   try {
     const { form, personId, contextId, relType, initMode, doRemove, pendingFile } = S.modal;
     let photoId = form.photoId;
-
     if (doRemove && photoId) {
-      await photoDelete(photoId);
-      delete S.photos[photoId];
-      photoId = null;
+      await photoDelete(photoId); delete S.photos[photoId]; photoId = null;
     } else if (pendingFile) {
       if (photoId) { await photoDelete(photoId); delete S.photos[photoId]; }
       const dataUrl = await photoCompress(pendingFile);
-      if (dataUrl) {
-        photoId = uid();
-        S.photos[photoId] = dataUrl;
-        await photoStore(photoId, dataUrl);
-      }
+      if (dataUrl) { photoId = uid(); S.photos[photoId] = dataUrl; await photoStore(photoId, dataUrl); }
     }
-
     const prevPerson = personId ? S.data.people[personId] : null;
-    const updates = { ...form, photoId };
-
+    const updates    = { ...form, photoId };
     if (updates.location && updates.location !== prevPerson?.location) {
       const coords = await geocode(updates.location);
       updates.lat = coords?.lat ?? null;
       updates.lng = coords?.lng ?? null;
     } else if (!updates.location) {
-      updates.lat = null;
-      updates.lng = null;
+      updates.lat = null; updates.lng = null;
     } else {
       updates.lat = prevPerson?.lat ?? null;
       updates.lng = prevPerson?.lng ?? null;
     }
-
     const isNew = initMode === 'add';
     if (isNew) personAddRel(contextId, relType, updates);
     else       personUpdate(personId, updates);
-
-    dataSave();
-    treeRender();
-    headerUpdate();
-    modalClose();
+    dataSave(); treeRender(); headerUpdate(); modalClose();
     if (isNew) treeFit();
   } catch (err) {
     console.error(err);
@@ -1334,26 +1518,22 @@ async function mDelete() {
   const { personId } = S.modal;
   const p    = S.data.people[personId];
   const name = [p?.firstName, p?.lastName].filter(Boolean).join(' ') || 'this person';
-  const desc = (p?.children||[]).filter(cid => {
-    const c = S.data.people[cid]; return c && !c.virtual;
-  }).length;
-  const msg = desc > 0
+  const desc = (p?.children||[]).length;
+  const msg  = desc > 0
     ? `Delete "${name}" and all their descendants? This cannot be undone.`
     : `Delete "${name}"?`;
   if (!confirm(msg)) return;
   if (p?.photoId) { await photoDelete(p.photoId); delete S.photos[p.photoId]; }
+  if (S.highlight === personId) S.highlight = null;
   personDelete(personId);
-  dataSave();
-  treeRender();
-  headerUpdate();
-  modalClose();
+  dataSave(); treeRender(); headerUpdate(); modalClose();
 }
 
 /* ═══════════════════════════════════════════════════════════════
    HEADER
 ═══════════════════════════════════════════════════════════════ */
 function headerUpdate() {
-  const n = Object.values(S.data.people).filter(p => !p.virtual).length;
+  const n = Object.values(S.data.people).length;
   document.getElementById('member-count').textContent = `${n} ${n===1?'member':'members'}`;
 }
 
@@ -1373,7 +1553,7 @@ async function doExport() {
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(
-    [JSON.stringify({ version:1, tree:S.data, photos:photoMap })],
+    [JSON.stringify({ version:2, tree:S.data, photos:photoMap })],
     { type:'application/json' }
   ));
   a.download = `family-tree-${new Date().toISOString().slice(0,10)}.json`;
@@ -1383,13 +1563,13 @@ async function doExport() {
 
 function doImportClick() {
   const input = document.createElement('input');
-  input.type = 'file';
+  input.type   = 'file';
   input.accept = '.json,application/json';
   input.onchange = async e => {
     const file = e.target.files[0]; if (!file) return;
     try {
       const parsed = JSON.parse(await file.text());
-      if (parsed.version!==1 || !parsed.tree) { alert('Invalid backup file.'); return; }
+      if ((!parsed.version || parsed.version < 1) || !parsed.tree) { alert('Invalid backup file.'); return; }
       if (!confirm('Import this family tree? Your current data will be replaced.')) return;
       if (parsed.photos) {
         const db = await dbOpen();
@@ -1403,14 +1583,13 @@ function doImportClick() {
         S.photos = parsed.photos;
       }
       S.data = parsed.tree;
-      // Migrate imported data
-      Object.values(S.data.people).forEach(p => {
-        if (p.spouseId === undefined) p.spouseId = null;
-        if (p.virtual  === undefined) p.virtual  = false;
-      });
+      migrateData(S.data);
+      S._layoutDirty = true;
+      S._pos = {};
       dataSave();
       treeRender();
       headerUpdate();
+      treeFit();
     } catch { alert('Could not read the file. Make sure it is a valid Family Tree backup.'); }
   };
   input.click();

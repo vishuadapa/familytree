@@ -310,7 +310,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.5';
+const APP_VERSION = 'v2.6';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -1772,7 +1772,7 @@ async function doExport() {
     [JSON.stringify({ version:2, tree:S.data, photos:photoMap })],
     { type:'application/json' }
   ));
-  a.download = `family-tree-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `family-tree-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

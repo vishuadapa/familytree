@@ -284,7 +284,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.2';
+const APP_VERSION = 'v2.3';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -305,7 +305,8 @@ const REL_ICONS  = { child:'👶', spouse:'💑', sibling:'👫', parent:'👆' 
 
 /* Sub-typed relationship keys — each maps to a base relType + default gender */
 const REL_SUB = {
-  child:   { type:'child',   gender:'',       icon:'👶', label:'Child'   },
+  son:     { type:'child',   gender:'male',   icon:'👦', label:'Son'     },
+  daughter:{ type:'child',   gender:'female', icon:'👧', label:'Daughter'},
   husband: { type:'spouse',  gender:'male',   icon:'🤵', label:'Husband' },
   wife:    { type:'spouse',  gender:'female', icon:'👰', label:'Wife'    },
   father:  { type:'parent',  gender:'male',   icon:'👨', label:'Father'  },
@@ -1244,7 +1245,9 @@ function relPickerRender() {
         <div class="rel-title">Add relative for <strong style="color:#c0c8d8">${name}</strong></div>
         <div style="padding:0 16px 4px">
           <div class="rel-section-label">Child</div>
-          <div style="margin-bottom:2px">${btn('child',false)}</div>
+          <div class="rel-grid" style="padding:0;margin-bottom:2px">
+            ${btn('son',false)}${btn('daughter',false)}
+          </div>
           <div class="rel-section-label">Partner</div>
           <div class="rel-grid" style="padding:0;margin-bottom:2px">
             ${btn('husband',spDis)}${btn('wife',spDis)}

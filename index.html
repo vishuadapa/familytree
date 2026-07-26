@@ -217,6 +217,31 @@ input.picker-search{width:100%}
   padding:6px 10px;border-radius:8px;cursor:pointer;transition:background .15s;line-height:1}
 #btn-refresh:hover{background:#2a3350}
 
+/* ── Search button ── */
+#btn-search{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:15px;
+  padding:6px 10px;border-radius:8px;cursor:pointer;transition:background .15s;line-height:1}
+#btn-search:hover{background:#2a3350}
+
+/* ── Search overlay ── */
+#search-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:320;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+.search-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
+  border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
+  animation:slide-up .28s cubic-bezier(.32,.72,0,1);
+  max-height:80dvh;display:flex;flex-direction:column}
+#search-list{overflow-y:auto;flex:1;overscroll-behavior:contain;
+  padding-bottom:env(safe-area-inset-bottom,12px)}
+.search-empty{padding:32px 16px;text-align:center;color:#4a5568;font-size:14px}
+
+/* ── Grandparent rows ── */
+.ancestor-section{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.8px;color:#4a5568;margin:8px 0 4px}
+
+@media(min-width:560px){
+  #search-overlay{align-items:center}
+  .search-sheet{border-radius:20px;margin:auto;max-height:70dvh}
+}
+
 /* ── Rel picker section labels ── */
 .rel-section-label{font-size:10px;font-weight:700;text-transform:uppercase;
   letter-spacing:.8px;color:#4a5568;margin:10px 0 5px}
@@ -238,6 +263,7 @@ input.picker-search{width:100%}
     <div class="header-right">
       <span id="member-count"></span>
       <span id="app-version"></span>
+      <button id="btn-search" title="Search people" onclick="searchOpen()">🔍</button>
       <button id="btn-refresh" title="Refresh layout">🔄</button>
       <button id="btn-fit" title="Fit tree to screen">⤢</button>
       <button id="btn-export">📤 Export</button>
@@ -284,7 +310,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.3';
+const APP_VERSION = 'v2.4';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -326,6 +352,7 @@ const S = {
   relpick:    null,
   linkpick:   null,
   personpick: null,
+  search:     null,
   highlight:  null,  // id of currently highlighted person
   _pos:       {},    // cached node positions {id: {x,y}}
   _layoutDirty: true,
@@ -1494,6 +1521,42 @@ function modalRender() {
         <span>${pLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${par.id}',mode:'view'})">${eh(pName)}</button>
         </span></div>`);
     });
+    /* Grandparents */
+    const grandparentsArr = parentsArr.flatMap(par =>
+      (par.parents || []).map(gpid => S.data.people[gpid]).filter(Boolean)
+    );
+    const seenGp = new Set();
+    const uniqueGp = grandparentsArr.filter(gp => { if (seenGp.has(gp.id)) return false; seenGp.add(gp.id); return true; });
+    if (uniqueGp.length) {
+      relParts.push(`<div class="ancestor-section">Grandparents</div>`);
+      uniqueGp.forEach(gp => {
+        const gpName = [gp.firstName, gp.lastName].filter(Boolean).join(' ') || 'Unnamed';
+        const gpLbl  = gLabel(gp.gender, 'Grandfather', 'Grandmother', 'Grandparent');
+        const gpIcon = gLabel(gp.gender, '👴', '👵', '👴');
+        relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px;opacity:.85">
+          <span class="row-icon">${gpIcon}</span>
+          <span>${gpLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${gp.id}',mode:'view'})">${eh(gpName)}</button>
+          </span></div>`);
+      });
+    }
+    /* Great-grandparents */
+    const greatGpArr = uniqueGp.flatMap(gp =>
+      (gp.parents || []).map(ggpid => S.data.people[ggpid]).filter(Boolean)
+    );
+    const seenGgp = new Set();
+    const uniqueGgp = greatGpArr.filter(ggp => { if (seenGgp.has(ggp.id)) return false; seenGgp.add(ggp.id); return true; });
+    if (uniqueGgp.length) {
+      relParts.push(`<div class="ancestor-section">Great-Grandparents</div>`);
+      uniqueGgp.forEach(ggp => {
+        const ggpName = [ggp.firstName, ggp.lastName].filter(Boolean).join(' ') || 'Unnamed';
+        const ggpLbl  = gLabel(ggp.gender, 'Great-Grandfather', 'Great-Grandmother', 'Great-Grandparent');
+        const ggpIcon = gLabel(ggp.gender, '👴', '👵', '👴');
+        relParts.push(`<div class="view-row" style="border-left:3px solid ${RC.parent};padding-left:10px;opacity:.7">
+          <span class="row-icon">${ggpIcon}</span>
+          <span>${ggpLbl}:&nbsp;<button class="person-link" onclick="modalClose();modalOpen({personId:'${ggp.id}',mode:'view'})">${eh(ggpName)}</button>
+          </span></div>`);
+      });
+    }
     siblingsArr.forEach(s => {
       const sn    = [s.firstName, s.lastName].filter(Boolean).join(' ') || 'Unnamed';
       const sLbl  = gLabel(s.gender, 'Brother', 'Sister', 'Sibling');
@@ -1724,6 +1787,72 @@ function doImportClick() {
     } catch { alert('Could not read the file. Make sure it is a valid Family Tree backup.'); }
   };
   input.click();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SEARCH
+═══════════════════════════════════════════════════════════════ */
+function searchOpen() {
+  S.search = { term: '' };
+  searchRender();
+  requestAnimationFrame(() => document.getElementById('search-input')?.focus());
+}
+function searchClose() {
+  S.search = null;
+  document.getElementById('search-overlay')?.remove();
+}
+function searchQuery(term) {
+  if (!S.search) return;
+  S.search.term = term;
+  searchUpdateList();
+}
+function searchRender() {
+  document.getElementById('search-overlay')?.remove();
+  if (!S.search) return;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="search-overlay" onclick="if(event.target.id==='search-overlay')searchClose()">
+      <div class="search-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div class="picker-header">
+          <div class="picker-title">Search People</div>
+          <input id="search-input" class="field picker-search" placeholder="🔍 Type a name…"
+                 oninput="searchQuery(this.value)" autocomplete="off"/>
+        </div>
+        <div id="search-list"></div>
+      </div>
+    </div>`);
+  searchUpdateList();
+}
+function searchUpdateList() {
+  const list = document.getElementById('search-list');
+  if (!list) return;
+  const term = (S.search?.term || '').trim().toLowerCase();
+  const all  = Object.values(S.data.people);
+  const matches = term
+    ? all.filter(p => [p.firstName, p.lastName, p.location, p.occupation]
+        .filter(Boolean).some(v => v.toLowerCase().includes(term)))
+    : all.slice().sort((a, b) => (a.firstName || '').localeCompare(b.firstName || ''));
+  if (!matches.length) {
+    list.innerHTML = `<div class="search-empty">${term ? 'No people match your search' : 'No people in tree yet'}</div>`;
+    return;
+  }
+  const col = id => personColor(id);
+  list.innerHTML = matches.map(p => {
+    const name = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+    const sub  = [p.location, p.occupation].filter(Boolean).join(' · ') || '';
+    const ini  = (p.firstName || '?')[0].toUpperCase();
+    const bg   = col(p.id);
+    return `<button class="picker-item" onclick="searchClose();modalOpen({personId:'${p.id}',mode:'view'})">
+      <div class="picker-item-avatar" style="background:${bg}">
+        <span>${eh(ini)}</span>
+      </div>
+      <div class="picker-item-info">
+        <div class="picker-item-name">${eh(name)}</div>
+        ${sub ? `<div class="picker-item-sub">${eh(sub)}</div>` : ''}
+      </div>
+      <div class="picker-item-arrow">›</div>
+    </button>`;
+  }).join('');
 }
 
 /* ═══════════════════════════════════════════════════════════════

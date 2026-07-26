@@ -201,6 +201,15 @@ input.picker-search{width:100%}
   padding:5px 12px;border-radius:16px;pointer-events:none;white-space:nowrap;
   backdrop-filter:blur(6px);z-index:5;transition:opacity .3s}
 
+/* ── Gender selector ── */
+.gender-btn{flex:1;background:#1a1f2e;border:1px solid #2e3a56;border-radius:10px;
+  padding:11px 8px;font-size:14px;font-weight:600;color:#6b7a99;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;font-family:inherit}
+.gender-btn:hover{background:#1e2538;color:#a0aec0}
+.gender-btn.gender-male{background:#1e3052;border-color:#3b82f6;color:#93c5fd}
+.gender-btn.gender-female{background:#3d1030;border-color:#ec4899;color:#f9a8d4}
+.gender-btn.gender-nonbinary{background:#2d1a50;border-color:#a855f7;color:#d8b4fe}
+
 @media(min-width:560px){
   .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
   #modal-overlay{align-items:center}
@@ -337,6 +346,7 @@ function migrateData(d) {
       if (!Array.isArray(p.parents)) p.parents = [];
       if (!Array.isArray(p.children)) p.children = [];
       if (p.spouseId === undefined) p.spouseId = null;
+      if (p.gender   === undefined) p.gender = '';
       delete p.virtual; delete p.parentId;
     });
     return;
@@ -506,6 +516,7 @@ function mkPerson(id, parents, fields) {
     spouseId:   null,
     firstName:  '',
     lastName:   '',
+    gender:     '',
     location:   '',
     lat:        null,
     lng:        null,
@@ -768,9 +779,12 @@ function layoutNodes(gen) {
 
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-  const spouseLinks = [];
-  const parentLinks = [];
+  const spouseLinks   = [];
+  const parentLinks   = [];
+  const coParentLinks = [];
   const seenSp = new Set();
+  const seenCp = new Set();
+
   ids.forEach(id => {
     const p = people[id];
     if (p.spouseId && nodeById[p.spouseId] && !seenSp.has(id + p.spouseId)) {
@@ -782,12 +796,27 @@ function layoutNodes(gen) {
     });
   });
 
+  /* Co-parent links: keep parents of shared children together even if not spouses */
+  ids.forEach(id => {
+    const p = people[id];
+    (p.children || []).forEach(cid => {
+      (people[cid]?.parents || []).forEach(otherId => {
+        if (otherId === id || p.spouseId === otherId) return;
+        const key = [id, otherId].sort().join('|');
+        if (seenCp.has(key) || !nodeById[otherId]) return;
+        seenCp.add(key);
+        coParentLinks.push({ source: nodeById[id], target: nodeById[otherId] });
+      });
+    });
+  });
+
   d3.forceSimulation(nodes)
-    .force('y',       d3.forceY(d => d.gen * V_GAP).strength(1.0))
-    .force('x',       d3.forceX(0).strength(0.04))
-    .force('collide', d3.forceCollide(NODE_R * 3.0).strength(0.85))
-    .force('spouse',  d3.forceLink(spouseLinks).distance(NODE_R * 2 + 24).strength(0.95))
-    .force('parent',  d3.forceLink(parentLinks).distance(V_GAP * 0.72).strength(0.18))
+    .force('y',        d3.forceY(d => d.gen * V_GAP).strength(1.0))
+    .force('x',        d3.forceX(0).strength(0.04))
+    .force('collide',  d3.forceCollide(NODE_R * 1.9).strength(0.65))
+    .force('spouse',   d3.forceLink(spouseLinks).distance(NODE_R * 2 + 8).strength(0.99))
+    .force('coparent', d3.forceLink(coParentLinks).distance(NODE_R * 2 + 8).strength(0.55))
+    .force('parent',   d3.forceLink(parentLinks).distance(V_GAP * 0.72).strength(0.18))
     .alphaDecay(0.025)
     .stop()
     .tick(300);
@@ -947,7 +976,9 @@ function treeRender() {
       else nodeOpacity = 0.22;
     }
 
-    const baseColor = isRoot ? '#6366f1' : '#4A90E2';
+    const genderFill  = { male:'#2563eb', female:'#be185d', nonbinary:'#7c3aed' };
+    const baseColor   = isRoot ? '#6366f1' : (genderFill[p.gender] || '#4A90E2');
+    const genderMark  = { male:'♂', female:'♀', nonbinary:'⚧' }[p.gender] || '';
     const face = photo
       ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}"
            width="${NODE_R*2}" height="${NODE_R*2}"
@@ -966,7 +997,7 @@ function treeRender() {
           stroke="${isRoot ? '#818cf8' : baseColor}" stroke-width="2.5"/>
         ${face}
         <text y="${NODE_R + 17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
-          font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}</text>
+          font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
         ${loc ? `<text y="${NODE_R + 30}" text-anchor="middle" fill="#6b7a99"
           font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
         <g class="add-rel" data-person="${id}" transform="translate(${NODE_R - 5},${-NODE_R + 5})">
@@ -1297,11 +1328,12 @@ function modalOpen(cfg) {
     form: p ? {
       firstName:  p.firstName  || '',
       lastName:   p.lastName   || '',
+      gender:     p.gender     || '',
       location:   p.location   || '',
       occupation: p.occupation || '',
       phone:      p.phone      || '',
       photoId:    p.photoId    || null,
-    } : { firstName:'', lastName:'', location:'', occupation:'', phone:'', photoId:null },
+    } : { firstName:'', lastName:'', gender:'', location:'', occupation:'', phone:'', photoId:null },
     preview:     (p?.photoId && S.photos[p.photoId]) || null,
     pendingFile: null,
     doRemove:    false,
@@ -1416,6 +1448,11 @@ function modalRender() {
           <input class="field" placeholder="Last name"
                  value="${ea(form.lastName)}"  oninput="S.modal.form.lastName=this.value"/>
         </div>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="gender-btn${form.gender==='male'?' gender-male':''}" onclick="mSetGender('male')">♂ Male</button>
+          <button type="button" class="gender-btn${form.gender==='female'?' gender-female':''}" onclick="mSetGender('female')">♀ Female</button>
+          <button type="button" class="gender-btn${form.gender==='nonbinary'?' gender-nonbinary':''}" onclick="mSetGender('nonbinary')">⚧ Other</button>
+        </div>
         <input class="field" placeholder="📍 Location (e.g. Lagos, Nigeria)"
                value="${ea(form.location)}"   oninput="S.modal.form.location=this.value"/>
         <input class="field" placeholder="💼 Occupation / what they do today"
@@ -1427,11 +1464,12 @@ function modalRender() {
     <div class="modal-body">
       <h2 class="view-name">${eh(dispName)}</h2>
       ${relRows}
+      ${form.gender ? `<div class="view-row"><span class="row-icon">${{male:'♂',female:'♀',nonbinary:'⚧'}[form.gender]}</span><span style="color:${{male:'#93c5fd',female:'#f9a8d4',nonbinary:'#d8b4fe'}[form.gender]}">${{male:'Male',female:'Female',nonbinary:'Non-binary / Other'}[form.gender]}</span></div>` : ''}
       ${form.location   ? `<div class="view-row"><span class="row-icon">📍</span><span>${eh(form.location)}</span></div>` : ''}
       ${form.occupation ? `<div class="view-row"><span class="row-icon">💼</span><span>${eh(form.occupation)}</span></div>` : ''}
       ${form.phone      ? `<div class="view-row"><span class="row-icon">📞</span>
           <a class="phone-link" href="tel:${ea(form.phone)}">${eh(form.phone)}</a></div>` : ''}
-      ${!relRows && !form.location && !form.occupation && !form.phone
+      ${!relRows && !form.gender && !form.location && !form.occupation && !form.phone
         ? `<p class="no-details">No details yet — tap Edit to add some.</p>` : ''}
     </div>`;
 
@@ -1473,6 +1511,12 @@ function mRemovePhoto() {
   S.modal.pendingFile = null;
   S.modal.preview     = null;
   S.modal.doRemove    = true;
+  modalRender();
+}
+
+function mSetGender(g) {
+  if (!S.modal) return;
+  S.modal.form.gender = S.modal.form.gender === g ? '' : g; // tap same = clear
   modalRender();
 }
 

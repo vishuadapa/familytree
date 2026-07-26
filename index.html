@@ -141,6 +141,52 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
   border:none;border-radius:12px;font-size:16px;font-weight:600;color:#a0aec0;cursor:pointer}
 .rel-cancel-btn:hover{background:#2a3350}
 
+/* ── Link choice overlay (New vs Existing) ── */
+#link-choice-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:310;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+.link-choice{display:flex;flex-direction:column;gap:10px;padding:4px 16px 12px}
+.link-choice-btn{background:#1e2538;border:1px solid #2e3a56;border-radius:14px;
+  padding:16px;display:flex;align-items:center;gap:14px;cursor:pointer;
+  text-align:left;color:#c0c8d8;transition:background .15s,border-color .15s;width:100%}
+.link-choice-btn:hover,.link-choice-btn:active{background:#2a3350;border-color:#4A90E2}
+.link-choice-icon{font-size:28px;flex:none;line-height:1}
+.link-choice-label{font-size:15px;font-weight:600;margin-bottom:2px}
+.link-choice-sub{font-size:12px;color:#6b7a99}
+
+/* ── Person picker overlay ── */
+#person-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:320;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+.person-picker-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
+  border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
+  animation:slide-up .28s cubic-bezier(.32,.72,0,1);
+  max-height:80dvh;display:flex;flex-direction:column}
+.picker-header{padding:4px 16px 12px;flex:none}
+.picker-title{font-size:14px;color:#8892a4;text-align:center;padding:4px 0 10px}
+.picker-title strong{color:#c0c8d8}
+input.picker-search{width:100%}
+#picker-list{overflow-y:auto;flex:1;overscroll-behavior:contain;
+  padding-bottom:env(safe-area-inset-bottom,12px)}
+.picker-item{display:flex;align-items:center;gap:12px;width:100%;padding:12px 16px;
+  background:none;border:none;border-bottom:1px solid #1a1f2e;cursor:pointer;
+  text-align:left;transition:background .12s}
+.picker-item:hover,.picker-item:active{background:#1a1f2e}
+.picker-item:last-child{border-bottom:none}
+.picker-item-avatar{width:44px;height:44px;border-radius:50%;flex:none;
+  display:flex;align-items:center;justify-content:center;overflow:hidden}
+.picker-item-avatar span{color:#fff;font-weight:700;font-size:16px;font-family:system-ui}
+.picker-item-info{flex:1;min-width:0}
+.picker-item-name{font-size:15px;font-weight:600;color:#e0e6f0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.picker-item-sub{font-size:12px;color:#6b7a99;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.picker-item-arrow{color:#4a5568;font-size:20px;flex:none}
+.picker-empty{padding:32px 16px;text-align:center;color:#4a5568;font-size:14px}
+
+/* ── Fit button ── */
+#btn-fit{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:15px;
+  padding:6px 10px;border-radius:8px;cursor:pointer;transition:background .15s;line-height:1}
+#btn-fit:hover{background:#2a3350}
+
 /* ── Leaflet overrides ── */
 .leaflet-container{background:#1a1f2e}
 .leaflet-popup-content-wrapper{background:#12151f;border:1px solid #2e3a56;
@@ -153,7 +199,9 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
   .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
   #modal-overlay{align-items:center}
   .rel-sheet{border-radius:20px;margin:auto}
-  #rel-overlay{align-items:center}
+  #rel-overlay,#link-choice-overlay{align-items:center}
+  #person-picker-overlay{align-items:center}
+  .person-picker-sheet{border-radius:20px;margin:auto;max-height:70dvh}
 }
 </style>
 </head>
@@ -163,6 +211,7 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
     <span class="header-title">🌳 Family Tree</span>
     <div class="header-right">
       <span id="member-count"></span>
+      <button id="btn-fit" title="Fit tree to screen">⤢</button>
       <button id="btn-export">📤 Export</button>
     </div>
   </header>
@@ -219,11 +268,13 @@ const REL_ICONS  = { child:'👶', spouse:'💑', sibling:'👫', parent:'👆' 
    APP STATE
 ═══════════════════════════════════════════════════════════════ */
 const S = {
-  data:    null,
-  photos:  {},
-  view:    'tree',
-  modal:   null,
-  relpick: null,
+  data:       null,
+  photos:     {},
+  view:       'tree',
+  modal:      null,
+  relpick:    null,
+  linkpick:   null,
+  personpick: null,
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -239,6 +290,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   navSetup();
   document.getElementById('btn-export').addEventListener('click', doExport);
   document.getElementById('btn-import').addEventListener('click', doImportClick);
+  document.getElementById('btn-fit').addEventListener('click', treeFit);
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -462,6 +514,129 @@ function personDelete(id) {
   }
 }
 
+function cleanupVirtual(parentId) {
+  const par = S.data.people[parentId];
+  if (!par || !par.virtual) return;
+  if (par.children.length === 0) {
+    delete S.data.people[par.id];
+    if (S.data.rootId === par.id) {
+      const nid = uid();
+      S.data.rootId = nid;
+      S.data.people[nid] = mkPerson(nid, null, { firstName:'You' });
+    }
+  } else if (par.children.length === 1) {
+    const sole = par.children[0];
+    S.data.people[sole].parentId = par.parentId;
+    if (S.data.rootId === par.id) S.data.rootId = sole;
+    delete S.data.people[par.id];
+  }
+}
+
+function removeFromParent(id) {
+  const p = S.data.people[id]; if (!p || !p.parentId) return;
+  const par = S.data.people[p.parentId]; if (!par) return;
+  par.children = par.children.filter(c => c !== id);
+  p.parentId = null;
+  cleanupVirtual(par.id);
+}
+
+function getAncestors(id) {
+  const result = new Set();
+  let cur = S.data.people[id];
+  const visited = new Set();
+  while (cur && cur.parentId && !visited.has(cur.id)) {
+    visited.add(cur.id);
+    result.add(cur.parentId);
+    cur = S.data.people[cur.parentId];
+  }
+  return result;
+}
+
+function getDescendants(id) {
+  const result = new Set();
+  function walk(pid) {
+    const p = S.data.people[pid]; if (!p) return;
+    (p.children||[]).forEach(cid => { result.add(cid); walk(cid); });
+  }
+  walk(id);
+  return result;
+}
+
+function getEligiblePeople(contextId, relType) {
+  const ctx = S.data.people[contextId];
+  if (!ctx) return [];
+  const ancestors   = getAncestors(contextId);
+  const descendants = getDescendants(contextId);
+  const ctxParentChildren = ctx.parentId && S.data.people[ctx.parentId]
+    ? S.data.people[ctx.parentId].children || []
+    : [];
+
+  return Object.values(S.data.people).filter(p => {
+    if (p.virtual || p.id === contextId) return false;
+    if (relType === 'spouse')  return !ctx.spouseId && !p.spouseId;
+    if (relType === 'child')   return !ancestors.has(p.id) && !ctx.children.includes(p.id);
+    if (relType === 'parent')  return !descendants.has(p.id) && ctx.parentId !== p.id;
+    if (relType === 'sibling') return !ctxParentChildren.includes(p.id);
+    return true;
+  });
+}
+
+function linkExisting(contextId, relType, targetId) {
+  const ctx = S.data.people[contextId];
+  const tgt = S.data.people[targetId];
+  if (!ctx || !tgt || contextId === targetId) return;
+
+  if (relType === 'spouse') {
+    if (ctx.spouseId || tgt.spouseId) return;
+    ctx.spouseId = targetId;
+    tgt.spouseId = contextId;
+
+  } else if (relType === 'child') {
+    if (getAncestors(contextId).has(targetId)) {
+      alert('Cannot add: this would create a circular relationship.'); return;
+    }
+    if (S.data.rootId === targetId) S.data.rootId = contextId;
+    removeFromParent(targetId);
+    tgt.parentId = contextId;
+    if (!ctx.children.includes(targetId)) ctx.children.push(targetId);
+
+  } else if (relType === 'sibling') {
+    let parentId = ctx.parentId;
+    if (!parentId) {
+      parentId = mkVirtualRoot();
+      S.data.people[parentId].children.push(contextId);
+      ctx.parentId = parentId;
+      S.data.rootId = parentId;
+    }
+    if (S.data.rootId === targetId) S.data.rootId = parentId;
+    removeFromParent(targetId);
+    tgt.parentId = parentId;
+    if (!S.data.people[parentId].children.includes(targetId))
+      S.data.people[parentId].children.push(targetId);
+
+  } else if (relType === 'parent') {
+    if (getDescendants(contextId).has(targetId)) {
+      alert('Cannot add: this would create a circular relationship.'); return;
+    }
+    const oldParentId = ctx.parentId;
+    removeFromParent(targetId);
+    tgt.parentId = oldParentId;
+    if (oldParentId && S.data.people[oldParentId]) {
+      const gp = S.data.people[oldParentId];
+      const idx = gp.children.indexOf(contextId);
+      if (idx >= 0) gp.children[idx] = targetId; else gp.children.push(targetId);
+    }
+    ctx.parentId = targetId;
+    if (!tgt.children.includes(contextId)) tgt.children.push(contextId);
+    if (S.data.rootId === contextId) S.data.rootId = targetId;
+  }
+
+  dataSave();
+  treeRender();
+  headerUpdate();
+  treeFit();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    COLOR HELPERS
 ═══════════════════════════════════════════════════════════════ */
@@ -613,6 +788,24 @@ function treeRender() {
   });
 }
 
+function treeFit() {
+  const svg = document.getElementById('tree-svg');
+  const g   = document.getElementById('tree-g');
+  if (!g) return;
+  try {
+    const bbox = g.getBBox();
+    if (!bbox.width || !bbox.height) return;
+    const w = svg.clientWidth  || window.innerWidth;
+    const h = svg.clientHeight || (window.innerHeight - 112);
+    const pad = 80;
+    const scale = Math.min((w - pad*2) / bbox.width, (h - pad*2) / bbox.height, 1.2);
+    const tx = w/2 - (bbox.x + bbox.width/2) * scale;
+    const ty = pad - bbox.y * scale;
+    d3.select('#tree-svg').transition().duration(500)
+      .call(treeZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  } catch {}
+}
+
 /* ═══════════════════════════════════════════════════════════════
    MAP VIEW
 ═══════════════════════════════════════════════════════════════ */
@@ -740,7 +933,148 @@ function relPickerRender() {
 function relPickerSelect(relType) {
   const { personId } = S.relpick;
   relPickerClose();
-  modalOpen({ contextId: personId, relType, mode: 'add' });
+  const eligible = getEligiblePeople(personId, relType);
+  if (eligible.length > 0) {
+    linkChoiceOpen(personId, relType, eligible.length);
+  } else {
+    modalOpen({ contextId: personId, relType, mode: 'add' });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LINK CHOICE (New person vs Link existing)
+═══════════════════════════════════════════════════════════════ */
+function linkChoiceOpen(contextId, relType, eligibleCount) {
+  S.linkpick = { contextId, relType, eligibleCount };
+  const ctx = S.data.people[contextId];
+  const name = eh([ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'them');
+  document.getElementById('link-choice-overlay')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="link-choice-overlay" onclick="if(event.target.id==='link-choice-overlay')linkChoiceClose()">
+      <div class="rel-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div class="rel-title">${REL_ICONS[relType]} ${capitalize(REL_LABELS[relType])} for
+          <strong style="color:#c0c8d8">${name}</strong></div>
+        <div class="link-choice">
+          <button class="link-choice-btn" onclick="linkChoiceNew()">
+            <span class="link-choice-icon">➕</span>
+            <div>
+              <div class="link-choice-label">Create new person</div>
+              <div class="link-choice-sub">Fill in their details</div>
+            </div>
+          </button>
+          <button class="link-choice-btn" onclick="linkChoiceExisting()">
+            <span class="link-choice-icon">🔗</span>
+            <div>
+              <div class="link-choice-label">Link existing person</div>
+              <div class="link-choice-sub">${eligibleCount} ${eligibleCount===1?'person':'people'} in tree</div>
+            </div>
+          </button>
+        </div>
+        <button class="rel-cancel-btn" onclick="linkChoiceClose()">Cancel</button>
+      </div>
+    </div>`);
+}
+
+function linkChoiceClose() {
+  document.getElementById('link-choice-overlay')?.remove();
+  S.linkpick = null;
+}
+
+function linkChoiceNew() {
+  const { contextId, relType } = S.linkpick;
+  linkChoiceClose();
+  modalOpen({ contextId, relType, mode: 'add' });
+}
+
+function linkChoiceExisting() {
+  const { contextId, relType } = S.linkpick;
+  linkChoiceClose();
+  personPickerOpen(contextId, relType);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PERSON PICKER (searchable list of existing people)
+═══════════════════════════════════════════════════════════════ */
+function personPickerOpen(contextId, relType) {
+  S.personpick = { contextId, relType, search: '' };
+  const ctx = S.data.people[contextId];
+  const ctxName = eh([ctx?.firstName, ctx?.lastName].filter(Boolean).join(' ') || 'person');
+  document.getElementById('person-picker-overlay')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="person-picker-overlay" onclick="if(event.target.id==='person-picker-overlay')personPickerClose()">
+      <div class="person-picker-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div class="picker-header">
+          <div class="picker-title">Link as ${REL_ICONS[relType]} <strong>${REL_LABELS[relType]}</strong> of <strong>${ctxName}</strong></div>
+          <input class="field picker-search" placeholder="🔍 Search by name…"
+                 oninput="personPickerSearch(this.value)" autocomplete="off" autocorrect="off"/>
+        </div>
+        <div id="picker-list"></div>
+      </div>
+    </div>`);
+  personPickerUpdateList();
+}
+
+function personPickerClose() {
+  document.getElementById('person-picker-overlay')?.remove();
+  S.personpick = null;
+}
+
+function personPickerSearch(term) {
+  if (!S.personpick) return;
+  S.personpick.search = term;
+  personPickerUpdateList();
+}
+
+function personPickerUpdateList() {
+  const { contextId, relType, search } = S.personpick;
+  const listEl = document.getElementById('picker-list');
+  if (!listEl) return;
+
+  const eligible = getEligiblePeople(contextId, relType);
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? eligible.filter(p =>
+        [p.firstName, p.lastName, p.location, p.occupation]
+          .some(f => f?.toLowerCase().includes(term)))
+    : eligible;
+
+  if (!filtered.length) {
+    listEl.innerHTML = `<div class="picker-empty">${term ? 'No matches' : 'No eligible people to link'}</div>`;
+    return;
+  }
+
+  const sorted = [...filtered].sort((a, b) =>
+    (a.firstName||'').localeCompare(b.firstName||''));
+
+  listEl.innerHTML = sorted.map(p => {
+    const col   = personColor(p.id);
+    const photo = p.photoId ? S.photos[p.photoId] : null;
+    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+    const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+    const sub   = [p.occupation, p.location].filter(Boolean).join(' · ');
+    const avStyle = photo
+      ? `background:#1e2130;background-image:url('${photo}');background-size:cover;background-position:center`
+      : `background:${col}`;
+    return `
+      <button class="picker-item" onclick="personPickerSelect('${p.id}')">
+        <div class="picker-item-avatar" style="${avStyle}">
+          ${!photo ? `<span>${eh(init)}</span>` : ''}
+        </div>
+        <div class="picker-item-info">
+          <div class="picker-item-name">${eh(name)}</div>
+          ${sub ? `<div class="picker-item-sub">${eh(sub)}</div>` : ''}
+        </div>
+        <span class="picker-item-arrow">›</span>
+      </button>`;
+  }).join('');
+}
+
+function personPickerSelect(targetId) {
+  const { contextId, relType } = S.personpick;
+  personPickerClose();
+  linkExisting(contextId, relType, targetId);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -980,13 +1314,15 @@ async function mSave() {
       updates.lng = prevPerson?.lng ?? null;
     }
 
-    if (initMode==='add') personAddRel(contextId, relType, updates);
-    else                  personUpdate(personId, updates);
+    const isNew = initMode === 'add';
+    if (isNew) personAddRel(contextId, relType, updates);
+    else       personUpdate(personId, updates);
 
     dataSave();
     treeRender();
     headerUpdate();
     modalClose();
+    if (isNew) treeFit();
   } catch (err) {
     console.error(err);
     S.modal.saving = false;

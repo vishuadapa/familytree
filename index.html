@@ -1,16 +1,800 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="theme-color" content="#0f1117" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>Family Tree</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="theme-color" content="#0f1117"/>
+<title>Family Tree</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0f1117;color:#e0e6f0;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+button{font-family:inherit}
+
+/* ── App shell ── */
+#app{display:flex;flex-direction:column;height:100%;height:100dvh}
+
+#header{flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 16px;height:52px;background:#12151f;border-bottom:1px solid #1e2538;z-index:10}
+.header-title{font-size:18px;font-weight:700;color:#e0e6f0;letter-spacing:-.3px}
+.header-right{display:flex;align-items:center;gap:10px}
+#member-count{font-size:12px;color:#6b7a99}
+#btn-export{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:13px;
+  padding:6px 12px;border-radius:8px;cursor:pointer;transition:background .15s}
+#btn-export:hover{background:#2a3350}
+
+#main{flex:1;overflow:hidden;position:relative}
+#tree-view,#map-view{position:absolute;inset:0}
+
+/* ── Tree ── */
+#tree-svg{width:100%;height:100%;display:block;background:#0f1117;touch-action:none}
+
+/* ── Map ── */
+#leaflet-map{width:100%;height:100%}
+#map-hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+  background:rgba(15,17,23,.9);border:1px solid #2e3a56;color:#8892a4;font-size:12px;
+  padding:8px 14px;border-radius:20px;white-space:nowrap;pointer-events:none;
+  backdrop-filter:blur(8px);z-index:1000}
+
+/* ── Bottom nav ── */
+#bottom-nav{flex:none;display:flex;background:#12151f;border-top:1px solid #1e2538;
+  padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;padding:10px 8px;background:none;border:none;cursor:pointer;color:#4a5568;transition:color .15s}
+.nav-btn.active{color:#4A90E2}
+.nav-btn:hover{color:#718096}
+.nav-icon{font-size:22px;line-height:1}
+.nav-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+
+/* ── Modal overlay ── */
+#modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+
+/* ── Modal sheet ── */
+.modal-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
+  border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;max-height:92dvh;
+  overflow-y:auto;overscroll-behavior:contain;animation:slide-up .28s cubic-bezier(.32,.72,0,1)}
+@keyframes slide-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-handle{width:36px;height:4px;background:#2e3a56;border-radius:2px;margin:12px auto 8px}
+
+/* ── Photo section ── */
+.photo-sec{display:flex;flex-direction:column;align-items:center;padding:12px 16px 8px;gap:10px}
+.avatar{width:90px;height:90px;border-radius:50%;background:#1e2538 center/cover no-repeat;
+  display:flex;align-items:center;justify-content:center;border:3px solid #2e3a56;
+  position:relative;overflow:hidden;flex-shrink:0}
+.avatar-initials{font-size:32px;font-weight:700;color:#a0aec0;pointer-events:none}
+.avatar-cam{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;
+  align-items:center;justify-content:center;font-size:28px;opacity:0;transition:opacity .15s;cursor:pointer}
+.avatar:hover .avatar-cam,.avatar:active .avatar-cam{opacity:1}
+.photo-btns{display:flex;gap:8px}
+.btn-photo,.btn-photo-rm{font-size:13px;padding:6px 14px;border-radius:8px;
+  border:1px solid #2e3a56;cursor:pointer;transition:background .15s}
+.btn-photo{background:#1e2538;color:#a0aec0}.btn-photo:hover{background:#2a3350}
+.btn-photo-rm{background:transparent;color:#f87171;border-color:rgba(248,113,113,.3)}
+.btn-photo-rm:hover{background:rgba(248,113,113,.1)}
+
+/* ── Modal body ── */
+.modal-body{padding:8px 20px 4px}
+.view-name{margin:0 0 14px;font-size:22px;font-weight:700;color:#e0e6f0}
+.view-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;
+  border-bottom:1px solid #1e2538;color:#c0c8d8;font-size:15px}
+.view-row:last-child{border-bottom:none}
+.row-icon{font-size:18px;flex:none}
+.phone-link{color:#4A90E2;text-decoration:none}
+.phone-link:hover{text-decoration:underline}
+.no-details{color:#4a5568;font-size:14px;margin:0;padding:8px 0}
+
+/* ── Edit form ── */
+.form-stack{display:flex;flex-direction:column;gap:10px}
+.form-pair{display:flex;gap:10px}
+input.field{width:100%;background:#1a1f2e;border:1px solid #2e3a56;border-radius:10px;
+  padding:13px 14px;font-size:15px;color:#e0e6f0;outline:none;transition:border-color .15s;
+  -webkit-appearance:none;font-family:inherit}
+input.field::placeholder{color:#4a5568}
+input.field:focus{border-color:#4A90E2;background:#1e2538}
+
+/* ── Modal actions ── */
+.modal-actions{display:flex;gap:10px;padding:16px 20px 4px}
+.btn-save,.btn-edit,.btn-cancel,.btn-del{flex:1;padding:14px;border-radius:12px;
+  font-size:16px;font-weight:600;border:none;cursor:pointer;transition:background .15s,opacity .15s}
+.btn-save,.btn-edit{background:#4A90E2;color:#fff}
+.btn-save:hover,.btn-edit:hover{background:#357abd}
+.btn-save:disabled{opacity:.6;cursor:wait}
+.btn-cancel{background:#1e2538;color:#a0aec0}.btn-cancel:hover{background:#2a3350}
+.btn-cancel:disabled{opacity:.6}
+.btn-del{flex:0 1 auto;padding:14px 20px;background:rgba(239,68,68,.15);
+  color:#f87171;border:1px solid rgba(239,68,68,.3)}
+.btn-del:hover{background:rgba(239,68,68,.25)}
+
+/* ── Leaflet overrides ── */
+.leaflet-container{background:#1a1f2e}
+.leaflet-popup-content-wrapper{background:#12151f;border:1px solid #2e3a56;
+  border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.5);color:#e0e6f0}
+.leaflet-popup-tip{background:#12151f}
+.leaflet-popup-close-button{color:#6b7a99!important}
+.leaflet-popup-content{margin:10px 14px}
+
+@media(min-width:560px){
+  .modal-sheet{border-radius:20px;margin:auto;max-height:85dvh}
+  #modal-overlay{align-items:center}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="header">
+    <span class="header-title">🌳 Family Tree</span>
+    <div class="header-right">
+      <span id="member-count"></span>
+      <button id="btn-export">📤 Export</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="tree-view">
+      <svg id="tree-svg">
+        <defs id="tree-defs"></defs>
+        <g id="tree-g"></g>
+      </svg>
+    </div>
+    <div id="map-view" style="display:none">
+      <div id="leaflet-map"></div>
+      <div id="map-hint" style="display:none"></div>
+    </div>
+  </main>
+
+  <nav id="bottom-nav">
+    <button class="nav-btn active" data-view="tree">
+      <span class="nav-icon">🌳</span>
+      <span class="nav-label">Tree</span>
+    </button>
+    <button class="nav-btn" data-view="map">
+      <span class="nav-icon">🗺️</span>
+      <span class="nav-label">Map</span>
+    </button>
+    <button class="nav-btn" id="btn-import">
+      <span class="nav-icon">📥</span>
+      <span class="nav-label">Import</span>
+    </button>
+  </nav>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════
+   CONSTANTS
+═══════════════════════════════════════════════════════════════ */
+const STORAGE_KEY = 'familytree_v1';
+const DB_NAME     = 'familytree_photos';
+const DB_STORE    = 'photos';
+const NODE_R      = 36;
+const H_GAP       = 120;
+const V_GAP       = 110;
+const COLORS = ['#4A90E2','#E67E22','#2ECC71','#9B59B6','#E74C3C','#1ABC9C','#F39C12','#e84393'];
+
+/* ═══════════════════════════════════════════════════════════════
+   APP STATE
+═══════════════════════════════════════════════════════════════ */
+const S = {
+  data:   null,   // { rootId, people: {id: person} }
+  photos: {},     // photoId → dataURL
+  view:   'tree',
+  modal:  null,
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   BOOTSTRAP
+═══════════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', async () => {
+  S.data = dataLoad();
+  await photosLoadAll();
+  treeInit();
+  mapInit();
+  treeRender();
+  headerUpdate();
+  navSetup();
+  document.getElementById('btn-export').addEventListener('click', doExport);
+  document.getElementById('btn-import').addEventListener('click', doImportClick);
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   LOCAL STORAGE
+═══════════════════════════════════════════════════════════════ */
+function dataLoad() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  const id = uid();
+  return {
+    rootId: id,
+    people: {
+      [id]: { id, firstName:'You', lastName:'', location:'', lat:null, lng:null,
+               occupation:'', phone:'', photoId:null, parentId:null, children:[] }
+    }
+  };
+}
+function dataSave() { localStorage.setItem(STORAGE_KEY, JSON.stringify(S.data)); }
+
+/* ═══════════════════════════════════════════════════════════════
+   INDEXEDDB — photos
+═══════════════════════════════════════════════════════════════ */
+function dbOpen() {
+  return new Promise((ok, fail) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+    req.onsuccess = () => ok(req.result);
+    req.onerror   = () => fail(req.error);
+  });
+}
+
+async function photosLoadAll() {
+  const ids = Object.values(S.data.people).filter(p => p.photoId).map(p => p.photoId);
+  if (!ids.length) return;
+  try {
+    const db = await dbOpen();
+    await Promise.all(ids.map(id => new Promise(res => {
+      const r = db.transaction(DB_STORE).objectStore(DB_STORE).get(id);
+      r.onsuccess = () => { if (r.result) S.photos[id] = r.result; res(); };
+      r.onerror   = () => res();
+    })));
+  } catch {}
+}
+
+async function photoStore(id, dataUrl) {
+  try {
+    const db = await dbOpen();
+    await new Promise((ok, fail) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(dataUrl, id);
+      tx.oncomplete = ok; tx.onerror = fail;
+    });
+  } catch {}
+}
+
+async function photoDelete(id) {
+  if (!id) return;
+  try {
+    const db = await dbOpen();
+    await new Promise((ok, fail) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).delete(id);
+      tx.oncomplete = ok; tx.onerror = fail;
+    });
+  } catch {}
+}
+
+async function photoCompress(file) {
+  return new Promise(res => {
+    const img = new Image();
+    const blobUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const sz = 240, c = document.createElement('canvas');
+      c.width = c.height = sz;
+      const ctx = c.getContext('2d');
+      const min = Math.min(img.naturalWidth, img.naturalHeight);
+      ctx.drawImage(img, (img.naturalWidth-min)/2, (img.naturalHeight-min)/2, min, min, 0, 0, sz, sz);
+      URL.revokeObjectURL(blobUrl);
+      res(c.toDataURL('image/jpeg', 0.75));
+    };
+    img.onerror = () => { URL.revokeObjectURL(blobUrl); res(null); };
+    img.src = blobUrl;
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GEOCODING
+═══════════════════════════════════════════════════════════════ */
+const geoCache = new Map();
+async function geocode(str) {
+  if (!str?.trim()) return null;
+  const key = str.trim().toLowerCase();
+  if (geoCache.has(key)) return geoCache.get(key);
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(str)}&format=json&limit=1`,
+      { headers: {'Accept-Language':'en-US,en'} }
+    );
+    const data = await r.json();
+    if (data?.[0]) {
+      const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      geoCache.set(key, coords);
+      return coords;
+    }
+  } catch {}
+  return null;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CRUD
+═══════════════════════════════════════════════════════════════ */
+function personAdd(parentId, fields) {
+  const id = uid();
+  S.data.people[id] = { id, parentId: parentId||null, children: [], ...fields };
+  if (parentId && S.data.people[parentId])
+    S.data.people[parentId].children.push(id);
+  return id;
+}
+
+function personUpdate(id, fields) { Object.assign(S.data.people[id], fields); }
+
+function personDelete(id) {
+  function sweep(pid) {
+    const p = S.data.people[pid]; if (!p) return;
+    (p.children||[]).forEach(sweep);
+    delete S.data.people[pid];
+  }
+  const p = S.data.people[id]; if (!p) return;
+  sweep(id);
+  if (p.parentId && S.data.people[p.parentId])
+    S.data.people[p.parentId].children = S.data.people[p.parentId].children.filter(c => c !== id);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   COLOR HELPERS
+═══════════════════════════════════════════════════════════════ */
+function branchColor(d3node) {
+  if (!d3node || d3node.depth === 0) return COLORS[0];
+  let cur = d3node;
+  while (cur.parent && cur.parent.depth > 0) cur = cur.parent;
+  const idx = cur.parent?.children?.indexOf(cur) ?? 0;
+  return COLORS[idx % COLORS.length];
+}
+
+function personColor(personId) {
+  if (personId === S.data.rootId) return COLORS[0];
+  function walk(id, depth, bi) {
+    if (id === personId) return bi;
+    const p = S.data.people[id]; if (!p) return -1;
+    for (let i=0; i<(p.children||[]).length; i++) {
+      const r = walk(p.children[i], depth+1, depth===0 ? i : bi);
+      if (r !== -1) return r;
+    }
+    return -1;
+  }
+  const idx = walk(S.data.rootId, 0, 0);
+  return idx >= 0 ? COLORS[idx % COLORS.length] : COLORS[0];
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TREE VIEW
+═══════════════════════════════════════════════════════════════ */
+let treeZoom;
+
+function treeInit() {
+  const svg = d3.select('#tree-svg');
+  treeZoom = d3.zoom().scaleExtent([0.1,4])
+    .on('zoom', ({ transform }) => d3.select('#tree-g').attr('transform', transform));
+  svg.call(treeZoom);
+  const svgEl = document.getElementById('tree-svg');
+  const w = svgEl.clientWidth  || window.innerWidth;
+  const h = svgEl.clientHeight || (window.innerHeight - 112);
+  svg.call(treeZoom.transform, d3.zoomIdentity.translate(w/2, 90));
+}
+
+function treeRender() {
+  function buildHier(id) {
+    const p = S.data.people[id]; if (!p) return null;
+    return { ...p, children: (p.children||[]).map(buildHier).filter(Boolean) };
+  }
+  const hier = buildHier(S.data.rootId);
+  if (!hier) return;
+
+  const root = d3.hierarchy(hier);
+  d3.tree().nodeSize([H_GAP, V_GAP])(root);
+
+  const diagonal = d3.linkVertical().x(d => d.x).y(d => d.y);
+
+  // Clip paths for photos
+  document.getElementById('tree-defs').innerHTML = root.descendants()
+    .filter(n => n.data.photoId && S.photos[n.data.photoId])
+    .map(n => `<clipPath id="cp-${n.data.id}"><circle r="${NODE_R}"/></clipPath>`)
+    .join('');
+
+  // Links
+  const links = root.links().map(lk =>
+    `<path d="${diagonal(lk)}" fill="none" stroke="${branchColor(lk.target)}" stroke-width="2.5" stroke-opacity=".55"/>`
+  ).join('');
+
+  // Nodes
+  const nodes = root.descendants().map(n => {
+    const col   = branchColor(n);
+    const photo = n.data.photoId ? S.photos[n.data.photoId] : null;
+    const init  = ((n.data.firstName||'')[0]+(n.data.lastName||'')[0]).toUpperCase() || '?';
+    const name  = [n.data.firstName, n.data.lastName].filter(Boolean).join(' ');
+    const loc   = n.data.location ? n.data.location.split(',')[0] : '';
+
+    const face = photo
+      ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}" width="${NODE_R*2}" height="${NODE_R*2}"
+             clip-path="url(#cp-${n.data.id})" preserveAspectRatio="xMidYMid slice"/>`
+      : `<text text-anchor="middle" dominant-baseline="central" fill="white"
+             font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
+             pointer-events="none">${eh(init)}</text>`;
+
+    return `
+      <g class="t-node" data-id="${n.data.id}" transform="translate(${n.x},${n.y})">
+        <circle r="${NODE_R+5}" fill="transparent" style="cursor:pointer"/>
+        <circle r="${NODE_R}" fill="${photo?'#1e2130':col}" stroke="${col}" stroke-width="3" style="cursor:pointer"/>
+        ${face}
+        <text y="${NODE_R+17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
+              font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}</text>
+        ${loc ? `<text y="${NODE_R+31}" text-anchor="middle" fill="#6b7a99"
+              font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
+        <g class="add-child" data-parent="${n.data.id}" transform="translate(${NODE_R-6},${-NODE_R+6})">
+          <circle r="14" fill="#10b981" stroke="#0f1117" stroke-width="2" style="cursor:pointer"/>
+          <text text-anchor="middle" dominant-baseline="central" fill="white"
+                font-size="20" font-weight="700" font-family="system-ui" dy="1"
+                pointer-events="none">+</text>
+        </g>
+      </g>`;
+  }).join('');
+
+  document.getElementById('tree-g').innerHTML = links + nodes;
+
+  document.querySelectorAll('.t-node').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('.add-child')) return;
+      modalOpen({ personId: el.dataset.id, mode: 'view' });
+    });
+    const btn = el.querySelector('.add-child');
+    if (btn) btn.addEventListener('click', e => {
+      e.stopPropagation();
+      modalOpen({ parentId: btn.dataset.parent, mode: 'add' });
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAP VIEW
+═══════════════════════════════════════════════════════════════ */
+let leafMap, leafMarkers = [];
+
+function mapInit() {
+  leafMap = L.map('leaflet-map', { center:[20,10], zoom:2 });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom:19
+  }).addTo(leafMap);
+}
+
+function mapRender() {
+  leafMarkers.forEach(m => m.remove());
+  leafMarkers = [];
+
+  const all     = Object.values(S.data.people);
+  const located = all.filter(p => p.lat && p.lng);
+  const hint    = document.getElementById('map-hint');
+  const missing = all.length - located.length;
+  hint.style.display = missing > 0 ? '' : 'none';
+  hint.textContent   = `${missing} ${missing===1?'person has':'people have'} no location yet`;
+
+  located.forEach(p => {
+    const col   = personColor(p.id);
+    const photo = p.photoId ? S.photos[p.photoId] : null;
+    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase();
+
+    const inner = photo
+      ? `<img src="${photo}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+      : `<span style="color:#fff;font-weight:700;font-size:16px;font-family:system-ui">${eh(init)}</span>`;
+
+    const pin = `<div style="width:48px;height:48px;border-radius:50%;background:${photo?'#1e2130':col};
+      border:3px solid ${col};display:flex;align-items:center;justify-content:center;
+      overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:pointer">${inner}</div>`;
+
+    const marker = L.marker([p.lat, p.lng], {
+      icon: L.divIcon({ html:pin, className:'', iconSize:[48,48], iconAnchor:[24,24], popupAnchor:[0,-28] })
+    })
+    .bindPopup(`<div style="text-align:center">
+      <strong>${eh(p.firstName)} ${eh(p.lastName)}</strong>
+      ${p.location  ? `<br/><small>📍 ${eh(p.location)}</small>`  : ''}
+      ${p.occupation? `<br/><small>💼 ${eh(p.occupation)}</small>`: ''}
+    </div>`)
+    .addTo(leafMap)
+    .on('click', () => modalOpen({ personId:p.id, mode:'view' }));
+
+    leafMarkers.push(marker);
+  });
+
+  if (located.length)
+    leafMap.fitBounds(L.latLngBounds(located.map(p=>[p.lat,p.lng])), { padding:[60,60], maxZoom:10 });
+
+  setTimeout(() => leafMap.invalidateSize(), 80);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════════════════════ */
+function navSetup() {
+  document.querySelectorAll('.nav-btn[data-view]').forEach(btn =>
+    btn.addEventListener('click', () => navSwitch(btn.dataset.view))
+  );
+}
+
+function navSwitch(view) {
+  S.view = view;
+  document.getElementById('tree-view').style.display = view==='tree' ? '' : 'none';
+  document.getElementById('map-view').style.display  = view==='map'  ? '' : 'none';
+  document.querySelectorAll('.nav-btn[data-view]').forEach(b =>
+    b.classList.toggle('active', b.dataset.view===view)
+  );
+  if (view==='map') mapRender();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL
+═══════════════════════════════════════════════════════════════ */
+function modalOpen(cfg) {
+  const p = cfg.personId ? S.data.people[cfg.personId] : null;
+  S.modal = {
+    personId:    cfg.personId || null,
+    parentId:    cfg.parentId || null,
+    initMode:    cfg.mode,
+    mode:        cfg.mode,
+    form: p ? {
+      firstName:  p.firstName  || '',
+      lastName:   p.lastName   || '',
+      location:   p.location   || '',
+      occupation: p.occupation || '',
+      phone:      p.phone      || '',
+      photoId:    p.photoId    || null,
+    } : { firstName:'', lastName:'', location:'', occupation:'', phone:'', photoId:null },
+    preview:     (p?.photoId && S.photos[p.photoId]) || null,
+    pendingFile: null,
+    doRemove:    false,
+    saving:      false,
+  };
+  modalRender();
+}
+
+function modalClose() {
+  const el = document.getElementById('modal-overlay');
+  if (el) el.remove();
+  S.modal = null;
+}
+
+function modalRender() {
+  const old = document.getElementById('modal-overlay');
+  if (old) old.remove();
+  if (!S.modal) return;
+
+  const { mode, form, preview, saving, initMode } = S.modal;
+  const isEdit  = mode==='edit' || initMode==='add';
+  const isAdd   = initMode==='add';
+  const isRoot  = S.modal.personId === S.data.rootId;
+  const dispName= [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Unnamed';
+
+  const photoSec = `
+    <div class="photo-sec">
+      <div class="avatar" id="modal-avatar"
+           style="${preview ? `background-image:url('${preview}')` : ''}"
+           ${isEdit ? `onclick="document.getElementById('photo-file-input').click()"` : ''}>
+        ${!preview ? `<span class="avatar-initials">${eh((form.firstName||'?')[0])}</span>` : ''}
+        ${isEdit   ? `<div class="avatar-cam">📷</div>` : ''}
+      </div>
+      ${isEdit ? `
+        <div class="photo-btns">
+          <button class="btn-photo" onclick="document.getElementById('photo-file-input').click()">
+            ${preview ? 'Change photo' : 'Add photo'}
+          </button>
+          ${preview ? `<button class="btn-photo-rm" onclick="mRemovePhoto()">Remove</button>` : ''}
+        </div>
+        <input id="photo-file-input" type="file" accept="image/*" capture="environment"
+               style="display:none" onchange="mPhotoChange(this)"/>` : ''}
+    </div>`;
+
+  const body = isEdit ? `
+    <div class="modal-body">
+      <div class="form-stack">
+        <div class="form-pair">
+          <input class="field" placeholder="First name"
+                 value="${ea(form.firstName)}" oninput="S.modal.form.firstName=this.value"/>
+          <input class="field" placeholder="Last name"
+                 value="${ea(form.lastName)}"  oninput="S.modal.form.lastName=this.value"/>
+        </div>
+        <input class="field" placeholder="📍 Location (e.g. Lagos, Nigeria)"
+               value="${ea(form.location)}"   oninput="S.modal.form.location=this.value"/>
+        <input class="field" placeholder="💼 Occupation / what they do today"
+               value="${ea(form.occupation)}" oninput="S.modal.form.occupation=this.value"/>
+        <input class="field" type="tel" placeholder="📞 Phone number"
+               value="${ea(form.phone)}"      oninput="S.modal.form.phone=this.value"/>
+      </div>
+    </div>` : `
+    <div class="modal-body">
+      <h2 class="view-name">${eh(dispName)}</h2>
+      ${form.location   ? `<div class="view-row"><span class="row-icon">📍</span><span>${eh(form.location)}</span></div>` : ''}
+      ${form.occupation ? `<div class="view-row"><span class="row-icon">💼</span><span>${eh(form.occupation)}</span></div>` : ''}
+      ${form.phone      ? `<div class="view-row"><span class="row-icon">📞</span>
+          <a class="phone-link" href="tel:${ea(form.phone)}">${eh(form.phone)}</a></div>` : ''}
+      ${!form.location && !form.occupation && !form.phone
+        ? `<p class="no-details">No details yet — tap Edit to add some.</p>` : ''}
+    </div>`;
+
+  const actions = isEdit ? `
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="mCancel()" ${saving?'disabled':''}>Cancel</button>
+      <button class="btn-save"   onclick="mSave()"   ${saving?'disabled':''}>
+        ${saving ? 'Saving…' : 'Save'}
+      </button>
+    </div>` : `
+    <div class="modal-actions">
+      ${!isRoot ? `<button class="btn-del" onclick="mDelete()">Delete</button>` : ''}
+      <button class="btn-edit" onclick="mEdit()">Edit</button>
+    </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="modal-overlay" onclick="if(event.target.id==='modal-overlay')modalClose()">
+      <div class="modal-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        ${photoSec}${body}${actions}
+      </div>
+    </div>`);
+}
+
+/* ── Modal action handlers (globals needed for inline onclick) ── */
+function mEdit()   { S.modal.mode='edit'; modalRender(); }
+function mCancel() {
+  if (S.modal.initMode==='add') modalClose();
+  else { S.modal.mode='view'; modalRender(); }
+}
+
+function mPhotoChange(input) {
+  const file = input.files?.[0]; if (!file) return;
+  S.modal.pendingFile = file;
+  S.modal.doRemove    = false;
+  const fr = new FileReader();
+  fr.onload = e => { S.modal.preview = e.target.result; modalRender(); };
+  fr.readAsDataURL(file);
+}
+
+function mRemovePhoto() {
+  S.modal.pendingFile = null;
+  S.modal.preview     = null;
+  S.modal.doRemove    = true;
+  modalRender();
+}
+
+async function mSave() {
+  if (S.modal.saving) return;
+  S.modal.saving = true;
+  modalRender();
+
+  try {
+    const { form, personId, parentId, initMode, doRemove, pendingFile } = S.modal;
+    let photoId = form.photoId;
+
+    if (doRemove && photoId) {
+      await photoDelete(photoId);
+      delete S.photos[photoId];
+      photoId = null;
+    } else if (pendingFile) {
+      if (photoId) { await photoDelete(photoId); delete S.photos[photoId]; }
+      const dataUrl = await photoCompress(pendingFile);
+      if (dataUrl) {
+        photoId = uid();
+        S.photos[photoId] = dataUrl;
+        await photoStore(photoId, dataUrl);
+      }
+    }
+
+    const prevPerson = personId ? S.data.people[personId] : null;
+    const updates = { ...form, photoId };
+
+    if (updates.location && updates.location !== prevPerson?.location) {
+      const coords = await geocode(updates.location);
+      updates.lat = coords?.lat ?? null;
+      updates.lng = coords?.lng ?? null;
+    } else if (!updates.location) {
+      updates.lat = null;
+      updates.lng = null;
+    } else {
+      updates.lat = prevPerson?.lat ?? null;
+      updates.lng = prevPerson?.lng ?? null;
+    }
+
+    if (initMode==='add') personAdd(parentId, updates);
+    else                  personUpdate(personId, updates);
+
+    dataSave();
+    treeRender();
+    headerUpdate();
+    modalClose();
+  } catch (err) {
+    console.error(err);
+    S.modal.saving = false;
+    modalRender();
+  }
+}
+
+async function mDelete() {
+  const { personId } = S.modal;
+  const p    = S.data.people[personId];
+  const name = [p?.firstName, p?.lastName].filter(Boolean).join(' ') || 'this person';
+  const msg  = (p?.children?.length > 0)
+    ? `Delete "${name}" and all their descendants? This cannot be undone.`
+    : `Delete "${name}"?`;
+  if (!confirm(msg)) return;
+  if (p?.photoId) { await photoDelete(p.photoId); delete S.photos[p.photoId]; }
+  personDelete(personId);
+  dataSave();
+  treeRender();
+  headerUpdate();
+  modalClose();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HEADER
+═══════════════════════════════════════════════════════════════ */
+function headerUpdate() {
+  const n = Object.keys(S.data.people).length;
+  document.getElementById('member-count').textContent = `${n} ${n===1?'member':'members'}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORT / IMPORT
+═══════════════════════════════════════════════════════════════ */
+async function doExport() {
+  const ids = Object.values(S.data.people).filter(p=>p.photoId).map(p=>p.photoId);
+  const photoMap = {};
+  if (ids.length) {
+    const db = await dbOpen();
+    await Promise.all(ids.map(id => new Promise(res => {
+      const r = db.transaction(DB_STORE).objectStore(DB_STORE).get(id);
+      r.onsuccess = () => { if (r.result) photoMap[id] = r.result; res(); };
+      r.onerror   = () => res();
+    })));
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(
+    [JSON.stringify({ version:1, tree:S.data, photos:photoMap })],
+    { type:'application/json' }
+  ));
+  a.download = `family-tree-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function doImportClick() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.onchange = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed.version!==1 || !parsed.tree) { alert('Invalid backup file.'); return; }
+      if (!confirm('Import this family tree? Your current data will be replaced.')) return;
+      if (parsed.photos) {
+        const db = await dbOpen();
+        await Promise.all(Object.entries(parsed.photos).map(([id, dataUrl]) =>
+          new Promise((ok, fail) => {
+            const tx = db.transaction(DB_STORE,'readwrite');
+            tx.objectStore(DB_STORE).put(dataUrl, id);
+            tx.oncomplete = ok; tx.onerror = fail;
+          })
+        ));
+        S.photos = parsed.photos;
+      }
+      S.data = parsed.tree;
+      dataSave();
+      treeRender();
+      headerUpdate();
+    } catch { alert('Could not read the file. Make sure it is a valid Family Tree backup.'); }
+  };
+  input.click();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TINY UTILS
+═══════════════════════════════════════════════════════════════ */
+function uid() { return crypto.randomUUID(); }
+function eh(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function ea(s) { return String(s||'').replace(/"/g,'&quot;'); }
+</script>
+</body>
 </html>

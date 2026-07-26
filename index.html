@@ -22,6 +22,8 @@ button{font-family:inherit}
 .header-title{font-size:18px;font-weight:700;color:#e0e6f0;letter-spacing:-.3px}
 .header-right{display:flex;align-items:center;gap:10px}
 #member-count{font-size:12px;color:#6b7a99}
+#app-version{font-size:11px;color:#3d4a66;font-weight:600;letter-spacing:.3px;
+  background:#1a1f2e;border:1px solid #1e2538;border-radius:6px;padding:3px 7px}
 #btn-export{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:13px;
   padding:6px 12px;border-radius:8px;cursor:pointer;transition:background .15s}
 #btn-export:hover{background:#2a3350}
@@ -226,6 +228,7 @@ input.picker-search{width:100%}
     <span class="header-title">🌳 Family Tree</span>
     <div class="header-right">
       <span id="member-count"></span>
+      <span id="app-version"></span>
       <button id="btn-fit" title="Fit tree to screen">⤢</button>
       <button id="btn-export">📤 Export</button>
     </div>
@@ -271,6 +274,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
+const APP_VERSION = 'v2.1';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -316,6 +320,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   treeRender();
   headerUpdate();
   navSetup();
+  document.getElementById('app-version').textContent = APP_VERSION;
   document.getElementById('btn-export').addEventListener('click', doExport);
   document.getElementById('btn-import').addEventListener('click', doImportClick);
   document.getElementById('btn-fit').addEventListener('click', treeFit);

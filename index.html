@@ -19,9 +19,17 @@ button{font-family:inherit}
 
 #header{flex:none;display:flex;align-items:center;justify-content:space-between;
   padding:0 16px;height:52px;background:#12151f;border-bottom:1px solid #1e2538;z-index:10}
-.header-title{font-size:18px;font-weight:700;color:#e0e6f0;letter-spacing:-.3px}
-.header-right{display:flex;align-items:center;gap:10px}
-#member-count{font-size:12px;color:#6b7a99}
+.header-title{font-size:18px;font-weight:700;color:#e0e6f0;letter-spacing:-.3px;white-space:nowrap}
+.header-right{display:flex;align-items:center;gap:10px;min-width:0}
+#member-count{font-size:12px;color:#6b7a99;white-space:nowrap}
+@media(max-width:430px){
+  .header-title{font-size:16px}
+  .header-right{gap:7px}
+  #app-version{display:none}
+  #btn-export .btn-export-label{display:none}
+  #btn-export{font-size:15px;padding:6px 10px;line-height:1}
+}
+@media(max-width:350px){#member-count{display:none}}
 #app-version{font-size:11px;color:#3d4a66;font-weight:600;letter-spacing:.3px;
   background:#1a1f2e;border:1px solid #1e2538;border-radius:6px;padding:3px 7px}
 #btn-export{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:13px;
@@ -32,14 +40,132 @@ button{font-family:inherit}
 #tree-view,#map-view{position:absolute;inset:0}
 
 /* ── Tree ── */
-#tree-svg{width:100%;height:100%;display:block;background:#0f1117;touch-action:none}
+#tree-svg{width:100%;height:100%;display:block;touch-action:none;
+  background-color:#0f1117;
+  background-image:radial-gradient(circle,rgba(74,144,226,.10) 1px,transparent 1.4px),
+    radial-gradient(140% 90% at 50% 0%,#171c2c 0%,#0f1117 55%);
+  background-size:26px 26px,100% 100%}
+.node-inner{transform-box:fill-box;transform-origin:center;
+  animation:node-in .45s cubic-bezier(.34,1.56,.64,1) backwards}
+@keyframes node-in{from{transform:scale(0)}to{transform:scale(1)}}
+.ring-pulse{transform-box:fill-box;transform-origin:center;
+  animation:tree-ring-pulse 1.7s ease-out infinite}
+@keyframes tree-ring-pulse{0%{transform:scale(.92);opacity:1}
+  70%{transform:scale(1.16);opacity:.25}100%{transform:scale(1.2);opacity:0}}
+
+/* Tree legend (top pill, matches map legend) */
+#tree-legend{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:5;
+  display:flex;gap:12px;background:rgba(15,17,23,.85);border:1px solid #1e2538;
+  border-radius:14px;padding:6px 12px;backdrop-filter:blur(8px);pointer-events:none}
+
+/* Tree selection card (bottom, same glass style as map cards) */
+#tree-card{position:absolute;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  transform:translateX(-50%);width:min(calc(100% - 24px),420px);z-index:6;
+  display:none;flex-direction:column;gap:10px;
+  background:rgba(18,21,31,.92);border:1px solid #2e3a56;border-radius:18px;
+  padding:12px 14px;backdrop-filter:blur(12px);box-shadow:0 8px 24px rgba(0,0,0,.45);
+  animation:card-up .25s ease}
+@keyframes card-up{from{transform:translate(-50%,12px);opacity:0}
+  to{transform:translate(-50%,0);opacity:1}}
+.tree-card-top{display:flex;align-items:center;gap:12px}
+.tree-card-btns{display:flex;gap:8px}
+.tree-card-btn{flex:1;border:none;border-radius:11px;padding:11px 8px;
+  font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.tree-card-btn.primary{background:#4A90E2;color:#fff}
+.tree-card-btn.primary:active{background:#357abd}
+.tree-card-btn.ghost{background:#1e2538;color:#a0aec0;border:1px solid #2e3a56}
+.tree-card-btn.ghost:active{background:#2a3350}
 
 /* ── Map ── */
 #leaflet-map{width:100%;height:100%}
-#map-hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
-  background:rgba(15,17,23,.9);border:1px solid #2e3a56;color:#8892a4;font-size:12px;
-  padding:8px 14px;border-radius:20px;white-space:nowrap;pointer-events:none;
-  backdrop-filter:blur(8px);z-index:1000}
+#map-view{background:#0f1117}
+
+/* Map status chip (top center) */
+#map-chip{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1000;
+  display:flex;align-items:center;gap:7px;background:rgba(18,21,31,.88);
+  border:1px solid #2e3a56;color:#a0aec0;font-size:12.5px;font-weight:600;
+  padding:8px 14px;border-radius:20px;cursor:pointer;white-space:nowrap;
+  backdrop-filter:blur(10px);box-shadow:0 4px 16px rgba(0,0,0,.35)}
+#map-chip:active{background:#1e2538}
+#map-chip .chip-dot{width:7px;height:7px;border-radius:50%;background:#f59e0b;flex:none;
+  animation:chip-blink 2.2s ease infinite}
+@keyframes chip-blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Relationship-line legend (below chip) */
+#map-legend{position:absolute;top:54px;left:50%;transform:translateX(-50%);z-index:1000;
+  display:flex;gap:12px;background:rgba(15,17,23,.85);border:1px solid #1e2538;
+  border-radius:14px;padding:6px 12px;backdrop-filter:blur(8px);pointer-events:none}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#8892a4;font-weight:600}
+.legend-line{width:16px;height:0;border-top:2.5px solid var(--c);border-radius:2px}
+.legend-line.legend-dash{border-top-style:dashed}
+
+/* Floating fit-all button */
+#map-fit{position:absolute;right:12px;bottom:158px;z-index:1000;width:44px;height:44px;
+  border-radius:50%;background:rgba(18,21,31,.9);border:1px solid #2e3a56;color:#a0aec0;
+  font-size:19px;line-height:1;cursor:pointer;backdrop-filter:blur(8px);
+  box-shadow:0 4px 16px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}
+#map-fit:active{background:#1e2538}
+
+/* Avatar markers */
+.mk{display:flex;flex-direction:column;align-items:center;
+  filter:drop-shadow(0 4px 10px rgba(0,0,0,.55));
+  animation:mk-in .4s cubic-bezier(.34,1.56,.64,1) backwards}
+@keyframes mk-in{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+.mk-ring{position:relative;width:52px;height:52px;border-radius:50%;padding:3px;
+  background:var(--c);transition:transform .2s}
+.mk-av{width:100%;height:100%;border-radius:50%;background:#1e2130;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;border:2px solid #0f1117}
+.mk-av img{width:100%;height:100%;object-fit:cover}
+.mk-av span{color:#fff;font-weight:700;font-size:17px;font-family:system-ui}
+.mk-count{position:absolute;top:-5px;right:-5px;min-width:20px;height:20px;border-radius:10px;
+  background:#4A90E2;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;
+  justify-content:center;padding:0 5px;border:2px solid #0f1117}
+.mk-name{margin-top:4px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:rgba(15,17,23,.82);border:1px solid #1e2538;color:#c9d1e0;font-size:10.5px;
+  font-weight:600;padding:2px 8px;border-radius:10px;backdrop-filter:blur(4px)}
+.mk-sel .mk-ring{transform:scale(1.12)}
+.mk-sel .mk-ring::after{content:'';position:absolute;inset:-9px;border-radius:50%;
+  border:3px solid var(--c);animation:mk-pulse 1.6s ease-out infinite;pointer-events:none}
+@keyframes mk-pulse{0%{transform:scale(.72);opacity:.9}70%{transform:scale(1.22);opacity:0}100%{transform:scale(1.22);opacity:0}}
+
+/* Bottom card carousel */
+#map-cards{position:absolute;left:0;right:0;bottom:0;z-index:1000;display:flex;gap:10px;
+  overflow-x:auto;scroll-snap-type:x mandatory;
+  padding:8px 11vw calc(14px + env(safe-area-inset-bottom,0px));
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+#map-cards::-webkit-scrollbar{display:none}
+.map-card{flex:0 0 min(78vw,320px);scroll-snap-align:center;display:flex;align-items:center;
+  gap:12px;background:rgba(18,21,31,.92);border:1px solid #2e3a56;border-radius:18px;
+  padding:12px 14px;backdrop-filter:blur(12px);cursor:pointer;text-align:left;color:inherit;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);transition:border-color .2s,box-shadow .2s}
+.map-card.sel{border-color:#4A90E2;box-shadow:0 8px 28px rgba(74,144,226,.28)}
+.map-card-av{width:52px;height:52px;border-radius:50%;flex:none;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;border:2px solid #2e3a56}
+.map-card-av img{width:100%;height:100%;object-fit:cover}
+.map-card-av span{color:#fff;font-weight:700;font-size:18px;font-family:system-ui}
+.map-card-info{flex:1;min-width:0}
+.map-card-name{font-size:15px;font-weight:700;color:#e0e6f0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-card-sub{font-size:12px;color:#8892a4;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-card-cta{font-size:11px;color:#4A90E2;font-weight:600;margin-top:3px}
+
+/* Map empty state */
+#map-empty{position:absolute;inset:0;z-index:1001;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;text-align:center;padding:0 32px;
+  background:linear-gradient(180deg,rgba(15,17,23,.55),rgba(15,17,23,.9))}
+.map-empty-icon{font-size:54px}
+.map-empty-title{font-size:19px;font-weight:700;color:#e0e6f0}
+.map-empty-sub{font-size:13.5px;color:#8892a4;line-height:1.5;max-width:300px}
+.map-empty-btn{margin-top:8px;background:#4A90E2;color:#fff;border:none;border-radius:12px;
+  padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer}
+.map-empty-btn:active{background:#357abd}
+
+/* Generic bottom sheet overlay (map sheets) */
+.sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2140;
+  display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
+.sheet-list{overflow-y:auto;flex:1;overscroll-behavior:contain;
+  padding-bottom:env(safe-area-inset-bottom,12px)}
 
 /* ── Bottom nav ── */
 #bottom-nav{flex:none;display:flex;background:#12151f;border-top:1px solid #1e2538;
@@ -52,7 +178,7 @@ button{font-family:inherit}
 .nav-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 
 /* ── Modal overlay ── */
-#modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;
+#modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2000;
   display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
 @keyframes fade-in{from{opacity:0}to{opacity:1}}
 
@@ -122,7 +248,7 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
 .btn-del:hover{background:rgba(239,68,68,.25)}
 
 /* ── Relationship picker ── */
-#rel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:300;
+#rel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2100;
   display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
 .rel-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
   border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
@@ -144,7 +270,7 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
 .rel-cancel-btn:hover{background:#2a3350}
 
 /* ── Link choice overlay (New vs Existing) ── */
-#link-choice-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:310;
+#link-choice-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2110;
   display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
 .link-choice{display:flex;flex-direction:column;gap:10px;padding:4px 16px 12px}
 .link-choice-btn{background:#1e2538;border:1px solid #2e3a56;border-radius:14px;
@@ -156,7 +282,7 @@ input.field:focus{border-color:#4A90E2;background:#1e2538}
 .link-choice-sub{font-size:12px;color:#6b7a99}
 
 /* ── Person picker overlay ── */
-#person-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:320;
+#person-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2120;
   display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
 .person-picker-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
   border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
@@ -190,12 +316,10 @@ input.picker-search{width:100%}
 #btn-fit:hover{background:#2a3350}
 
 /* ── Leaflet overrides ── */
-.leaflet-container{background:#1a1f2e}
-.leaflet-popup-content-wrapper{background:#12151f;border:1px solid #2e3a56;
-  border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.5);color:#e0e6f0}
-.leaflet-popup-tip{background:#12151f}
-.leaflet-popup-close-button{color:#6b7a99!important}
-.leaflet-popup-content{margin:10px 14px}
+.leaflet-container{background:#0f1117;font-family:inherit}
+.leaflet-control-attribution{background:rgba(15,17,23,.72)!important;
+  color:#3d4a66!important;font-size:9px!important}
+.leaflet-control-attribution a{color:#4a5568!important}
 
 /* ── Tap hint ── */
 #tap-hint{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
@@ -223,7 +347,7 @@ input.picker-search{width:100%}
 #btn-search:hover{background:#2a3350}
 
 /* ── Search overlay ── */
-#search-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:320;
+#search-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2130;
   display:flex;align-items:flex-end;backdrop-filter:blur(4px);animation:fade-in .2s ease}
 .search-sheet{width:100%;max-width:560px;margin:0 auto;background:#12151f;
   border-radius:20px 20px 0 0;border-top:1px solid #2e3a56;
@@ -253,6 +377,10 @@ input.picker-search{width:100%}
   #rel-overlay,#link-choice-overlay{align-items:center}
   #person-picker-overlay{align-items:center}
   .person-picker-sheet{border-radius:20px;margin:auto;max-height:70dvh}
+  .sheet-overlay{align-items:center}
+  .sheet-overlay .search-sheet{border-radius:20px;margin:auto;max-height:70dvh}
+  .map-card{flex-basis:320px}
+  #map-cards{padding-left:calc(50% - 170px);padding-right:calc(50% - 170px)}
 }
 </style>
 </head>
@@ -266,22 +394,56 @@ input.picker-search{width:100%}
       <button id="btn-search" title="Search people" onclick="searchOpen()">🔍</button>
       <button id="btn-refresh" title="Refresh layout">🔄</button>
       <button id="btn-fit" title="Fit tree to screen">⤢</button>
-      <button id="btn-export">📤 Export</button>
+      <button id="btn-export">📤<span class="btn-export-label"> Export</span></button>
     </div>
   </header>
 
   <main id="main">
     <div id="tree-view">
       <svg id="tree-svg">
+        <defs>
+          <radialGradient id="g-male" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#1d4ed8"/>
+          </radialGradient>
+          <radialGradient id="g-female" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#f472b6"/><stop offset="100%" stop-color="#9d174d"/>
+          </radialGradient>
+          <radialGradient id="g-nb" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#c084fc"/><stop offset="100%" stop-color="#6d28d9"/>
+          </radialGradient>
+          <radialGradient id="g-def" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#6faae9"/><stop offset="100%" stop-color="#2563eb"/>
+          </radialGradient>
+          <radialGradient id="g-root" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#a5b4fc"/><stop offset="100%" stop-color="#4f46e5"/>
+          </radialGradient>
+          <filter id="node-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.5"/>
+          </filter>
+        </defs>
         <defs id="tree-defs"></defs>
         <g id="tree-g"></g>
-        <g id="tree-legend-fixed"></g>
       </svg>
-      <div id="tap-hint">Tap a person to highlight relatives · Tap again to view details</div>
+      <div id="tree-legend">
+        <span class="legend-item"><span class="legend-line" style="--c:#f97316"></span>Parent-Child</span>
+        <span class="legend-item"><span class="legend-line legend-dash" style="--c:#ec4899"></span>Spouse ♥</span>
+        <span class="legend-item"><span class="legend-line legend-dash" style="--c:#a855f7"></span>Sibling</span>
+      </div>
+      <div id="tree-card"></div>
+      <div id="tap-hint">Tap a person to select them · Tap again for their full profile</div>
     </div>
     <div id="map-view" style="display:none">
       <div id="leaflet-map"></div>
-      <div id="map-hint" style="display:none"></div>
+      <button id="map-chip" style="display:none" onclick="unmappedOpen()"></button>
+      <div id="map-legend" style="display:none"></div>
+      <button id="map-fit" title="Fit everyone on screen" onclick="mapFitAll()">⤢</button>
+      <div id="map-cards"></div>
+      <div id="map-empty" style="display:none">
+        <div class="map-empty-icon">🗺️</div>
+        <div class="map-empty-title">No one on the map yet</div>
+        <div class="map-empty-sub">Add a location to a family member and they'll show up here as a pin you can explore.</div>
+        <button class="map-empty-btn" onclick="unmappedOpen()">📍 Add a location</button>
+      </div>
     </div>
   </main>
 
@@ -310,7 +472,7 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v2.6';
+const APP_VERSION = 'v3.0';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -354,6 +516,7 @@ const S = {
   personpick: null,
   search:     null,
   highlight:  null,  // id of currently highlighted person
+  mapSel:     null,  // id of person selected on the map
   _pos:       {},    // cached node positions {id: {x,y}}
   _layoutDirty: true,
 };
@@ -938,6 +1101,7 @@ function treeRender() {
     if (S._layoutDirty) return layoutNodes(gen);
     return nb;
   })();
+  const animateIn = S._layoutDirty;  // play entrance animation only when layout changed
   S._layoutDirty = false;
 
   /* Clip paths for photos */
@@ -1028,6 +1192,7 @@ function treeRender() {
   });
 
   /* ── NODES ── */
+  let idx = 0;
   ids.forEach(id => {
     const p  = people[id];
     const n  = nodeById[id]; if (!n) return;
@@ -1038,10 +1203,10 @@ function treeRender() {
     const isRoot = id === S.data.rootId;
 
     /* Highlight ring */
-    let ringColor = 'none';
+    let ringColor = 'none', selfSel = false;
     let nodeOpacity = 1;
     if (hl) {
-      if (hl.self.has(id))          ringColor = RC.self;
+      if (hl.self.has(id))          { ringColor = RC.self; selfSel = true; }
       else if (hl.parents.has(id))  ringColor = RC.parent;
       else if (hl.children.has(id)) ringColor = RC.child;
       else if (hl.spouses.has(id))  ringColor = RC.spouse;
@@ -1049,8 +1214,10 @@ function treeRender() {
       else nodeOpacity = 0.22;
     }
 
-    const genderFill  = { male:'#2563eb', female:'#be185d', nonbinary:'#7c3aed' };
-    const baseColor   = isRoot ? '#6366f1' : (genderFill[p.gender] || '#4A90E2');
+    const gradId = isRoot ? 'g-root'
+      : ({ male:'g-male', female:'g-female', nonbinary:'g-nb' }[p.gender] || 'g-def');
+    const ringCol = { male:'#3b82f6', female:'#ec4899', nonbinary:'#a855f7' }[p.gender]
+      || (isRoot ? '#818cf8' : '#4A90E2');
     const genderMark  = { male:'♂', female:'♀', nonbinary:'⚧' }[p.gender] || '';
     const face = photo
       ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}"
@@ -1060,26 +1227,30 @@ function treeRender() {
            font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
            pointer-events="none">${eh(init)}</text>`;
 
+    const innerStyle = animateIn
+      ? ` style="animation-delay:${Math.min(idx * 30, 420)}ms"`
+      : ` style="animation:none"`;
+
     svg += `
       <g class="t-node" data-id="${id}" transform="translate(${n.x},${n.y})"
          style="opacity:${nodeOpacity};cursor:pointer">
-        <circle class="h-ring" r="${NODE_R + 7}" fill="none"
-          stroke="${ringColor}" stroke-width="3.5" pointer-events="none"/>
-        <circle r="${NODE_R + 5}" fill="transparent"/>
-        <circle r="${NODE_R}" fill="${photo ? '#1e2130' : baseColor}"
-          stroke="${isRoot ? '#818cf8' : baseColor}" stroke-width="2.5"/>
-        ${face}
-        <text y="${NODE_R + 17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
-          font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
-        ${loc ? `<text y="${NODE_R + 30}" text-anchor="middle" fill="#6b7a99"
-          font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
-        <g class="add-rel" data-person="${id}" transform="translate(${NODE_R - 5},${-NODE_R + 5})">
-          <circle r="13" fill="#10b981" stroke="#0f1117" stroke-width="2"/>
-          <text text-anchor="middle" dominant-baseline="central" fill="white"
-            font-size="19" font-weight="700" font-family="system-ui" dy="1"
-            pointer-events="none">+</text>
+        <g class="node-inner"${innerStyle}>
+          <circle class="${selfSel ? 'ring-pulse' : ''}" r="${NODE_R + 7}" fill="none"
+            stroke="${ringColor}" stroke-width="3.5" pointer-events="none"/>
+          <circle r="${NODE_R + 5}" fill="transparent"/>
+          <circle r="${NODE_R}" fill="${photo ? '#1e2130' : `url(#${gradId})`}"
+            stroke="${photo ? ringCol : 'rgba(255,255,255,.28)'}" stroke-width="2.5"
+            filter="url(#node-glow)"/>
+          ${face}
+          <text y="${NODE_R + 18}" text-anchor="middle" fill="#e2e8f5" font-size="12.5"
+            font-weight="600" font-family="system-ui" pointer-events="none"
+            stroke="#0f1117" stroke-width="3.5" paint-order="stroke">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
+          ${loc ? `<text y="${NODE_R + 32}" text-anchor="middle" fill="#8892a4"
+            font-size="10.5" font-family="system-ui" pointer-events="none"
+            stroke="#0f1117" stroke-width="3" paint-order="stroke">${eh(loc)}</text>` : ''}
         </g>
       </g>`;
+    idx++;
   });
 
   document.getElementById('tree-g').innerHTML = svg;
@@ -1087,52 +1258,47 @@ function treeRender() {
   /* Event listeners */
   document.querySelectorAll('.t-node').forEach(el => {
     const pid = el.dataset.id;
-    el.addEventListener('click', e => {
-      if (e.target.closest('.add-rel')) return;
+    el.addEventListener('click', () => {
       if (S.highlight === pid) {
-        /* Second tap: open detail modal */
+        /* Second tap: open full profile */
         S.highlight = null;
         treeRender();
         modalOpen({ personId: pid, mode: 'view' });
       } else {
-        /* First tap: highlight */
+        /* First tap: select — relatives light up, action card slides in */
         S.highlight = pid;
         treeRender();
       }
     });
-    const btn = el.querySelector('.add-rel');
-    if (btn) btn.addEventListener('click', e => {
-      e.stopPropagation();
-      relPickerOpen(btn.dataset.person);
-    });
   });
 
-  /* Legend — horizontal bar fixed at bottom of SVG */
-  const svgEl2 = document.getElementById('tree-svg');
-  const svgW = svgEl2.clientWidth  || window.innerWidth;
-  const svgH = svgEl2.clientHeight || (window.innerHeight - 112);
-  const hItems = [
-    { color: RC.parent,  label: 'Parent-Child', dashed: false },
-    { color: RC.spouse,  label: 'Spouse',        dashed: true,  sym: '♥' },
-    { color: RC.sibling, label: 'Sibling',       dashed: true },
-  ];
-  const iW = 112, hPad = 12;
-  const barW = hItems.length * iW + hPad * 2;
-  const bx = Math.max(8, (svgW - barW) / 2);
-  const by = svgH - 36;
-  let hLeg = `<rect x="${bx-hPad}" y="${by-8}" width="${barW+hPad}" height="28" rx="7"
-    fill="#0a0d14" fill-opacity="0.88" stroke="#1e2538" pointer-events="none"/>`;
-  hItems.forEach((it, i) => {
-    const x = bx + i * iW, y = by + 6;
-    hLeg += `<line x1="${x}" y1="${y}" x2="${x+22}" y2="${y}" stroke="${it.color}"
-        stroke-width="2.5" ${it.dashed?'stroke-dasharray="5,3"':''} stroke-linecap="round"
-        pointer-events="none"/>
-      ${it.sym ? `<text x="${x+11}" y="${y}" text-anchor="middle" dominant-baseline="middle"
-        fill="${it.color}" font-size="10" font-family="system-ui" pointer-events="none">${it.sym}</text>` : ''}
-      <text x="${x+28}" y="${y}" dominant-baseline="middle" fill="#6b7a99"
-        font-size="11" font-family="system-ui" pointer-events="none">${it.label}</text>`;
-  });
-  document.getElementById('tree-legend-fixed').innerHTML = hLeg;
+  treeCardUpdate();
+}
+
+/* Bottom action card for the selected person */
+function treeCardUpdate() {
+  const el = document.getElementById('tree-card');
+  const p  = S.highlight ? S.data.people[S.highlight] : null;
+  if (!p) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const photo = p.photoId ? S.photos[p.photoId] : null;
+  const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+  const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+  const sub   = [p.location, p.occupation].filter(Boolean).join(' · ');
+  el.innerHTML = `
+    <div class="tree-card-top">
+      <div class="map-card-av" style="background:${photo ? '#1e2130' : personColor(p.id)}">
+        ${photo ? `<img src="${photo}"/>` : `<span>${eh(init)}</span>`}
+      </div>
+      <div class="map-card-info">
+        <div class="map-card-name">${eh(name)}</div>
+        ${sub ? `<div class="map-card-sub">${eh(sub)}</div>` : ''}
+      </div>
+    </div>
+    <div class="tree-card-btns">
+      <button class="tree-card-btn primary" onclick="relPickerOpen('${p.id}')">➕ Add relative</button>
+      <button class="tree-card-btn ghost" onclick="modalOpen({personId:'${p.id}',mode:'view'})">👤 Profile</button>
+    </div>`;
+  el.style.display = 'flex';
 }
 
 function treeFit() {
@@ -1163,57 +1329,300 @@ function layoutRefresh() {
 /* ═══════════════════════════════════════════════════════════════
    MAP VIEW
 ═══════════════════════════════════════════════════════════════ */
-let leafMap, leafMarkers = [];
+let leafMap, mapMarkerRefs = [], mapLines = [];
+let mapCardScrollTimer = null, mapSuppressScroll = false;
 
 function mapInit() {
-  leafMap = L.map('leaflet-map', { center:[20,10], zoom:2 });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom:19
+  leafMap = L.map('leaflet-map', {
+    center:[20,10], zoom:2, zoomControl:false, worldCopyJump:true
+  });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains:'abcd', maxZoom:19
   }).addTo(leafMap);
+
+  /* Swiping the carousel selects the centered card */
+  document.getElementById('map-cards').addEventListener('scroll', () => {
+    if (mapSuppressScroll) return;
+    clearTimeout(mapCardScrollTimer);
+    mapCardScrollTimer = setTimeout(mapCardScrollSettled, 130);
+  });
 }
 
+function mapLocated() {
+  return Object.values(S.data.people)
+    .filter(p => p.lat != null && p.lng != null)
+    .sort((a,b) => (a.firstName||'').localeCompare(b.firstName||''));
+}
+
+function mapGroupKey(p) { return p.lat.toFixed(3) + ',' + p.lng.toFixed(3); }
+
 function mapRender() {
-  leafMarkers.forEach(m => m.remove());
-  leafMarkers = [];
-
   const all     = Object.values(S.data.people);
-  const located = all.filter(p => p.lat && p.lng);
-  const hint    = document.getElementById('map-hint');
+  const located = mapLocated();
   const missing = all.length - located.length;
-  hint.style.display = missing > 0 ? '' : 'none';
-  hint.textContent   = `${missing} ${missing===1?'person has':'people have'} no location yet`;
 
+  /* Status chip: how many are on the map, tap to add more */
+  const chip = document.getElementById('map-chip');
+  chip.style.display = (located.length && missing > 0) ? 'flex' : 'none';
+  chip.innerHTML = `<span class="chip-dot"></span>${located.length} of ${all.length} on the map · tap to add more`;
+
+  /* Empty state + fit button */
+  document.getElementById('map-empty').style.display = located.length ? 'none' : 'flex';
+  document.getElementById('map-fit').style.display   = located.length ? 'flex' : 'none';
+
+  /* Clear layers */
+  mapMarkerRefs.forEach(r => r.marker.remove());
+  mapMarkerRefs = [];
+  mapClearLines();
+  document.getElementById('map-legend').style.display = 'none';
+
+  if (S.mapSel && !located.some(p => p.id === S.mapSel)) S.mapSel = null;
+
+  /* Group people at identical coordinates (same city geocodes to one point) */
+  const groups = new Map();
   located.forEach(p => {
-    const col   = personColor(p.id);
-    const photo = p.photoId ? S.photos[p.photoId] : null;
-    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase();
-
-    const inner = photo
-      ? `<img src="${photo}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
-      : `<span style="color:#fff;font-weight:700;font-size:16px;font-family:system-ui">${eh(init)}</span>`;
-
-    const pin = `<div style="width:48px;height:48px;border-radius:50%;background:${photo?'#1e2130':col};
-      border:3px solid ${col};display:flex;align-items:center;justify-content:center;
-      overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:pointer">${inner}</div>`;
-
-    const marker = L.marker([p.lat, p.lng], {
-      icon: L.divIcon({ html:pin, className:'', iconSize:[48,48], iconAnchor:[24,24], popupAnchor:[0,-28] })
-    })
-    .bindPopup(`<div style="text-align:center">
-      <strong>${eh(p.firstName)} ${eh(p.lastName)}</strong>
-      ${p.location  ? `<br/><small>📍 ${eh(p.location)}</small>`  : ''}
-      ${p.occupation? `<br/><small>💼 ${eh(p.occupation)}</small>`: ''}
-    </div>`)
-    .addTo(leafMap)
-    .on('click', () => modalOpen({ personId:p.id, mode:'view' }));
-
-    leafMarkers.push(marker);
+    const key = mapGroupKey(p);
+    if (!groups.has(key)) groups.set(key, { key, lat:p.lat, lng:p.lng, people:[] });
+    groups.get(key).people.push(p);
   });
 
-  if (located.length)
-    leafMap.fitBounds(L.latLngBounds(located.map(p=>[p.lat,p.lng])), { padding:[60,60], maxZoom:10 });
+  let gi = 0;
+  groups.forEach(g => {
+    const lead  = g.people[0];
+    const col   = personColor(lead.id);
+    const photo = lead.photoId ? S.photos[lead.photoId] : null;
+    const init  = ((lead.firstName||'')[0]+(lead.lastName||'')[0]).toUpperCase() || '?';
+    const label = g.people.length > 1
+      ? (lead.location ? lead.location.split(',')[0] : `${g.people.length} people`)
+      : (lead.firstName || 'Unnamed');
+    const selected = S.mapSel && g.people.some(p => p.id === S.mapSel);
 
-  setTimeout(() => leafMap.invalidateSize(), 80);
+    const html = `
+      <div class="mk${selected ? ' mk-sel' : ''}" style="animation-delay:${Math.min(gi*45,450)}ms">
+        <div class="mk-ring" style="--c:${col}">
+          <div class="mk-av">${photo ? `<img src="${photo}"/>` : `<span>${eh(init)}</span>`}</div>
+          ${g.people.length > 1 ? `<div class="mk-count">${g.people.length}</div>` : ''}
+        </div>
+        <div class="mk-name">${eh(label)}</div>
+      </div>`;
+
+    const marker = L.marker([g.lat, g.lng], {
+      icon: L.divIcon({ html, className:'', iconSize:[100,80], iconAnchor:[50,26] })
+    }).addTo(leafMap)
+      .on('click', () => {
+        if (g.people.length === 1) mapSelect(g.people[0].id);
+        else mapPlaceSheetOpen(g.key);
+      });
+    mapMarkerRefs.push({ marker, ids: g.people.map(p => p.id) });
+    gi++;
+  });
+
+  /* Bottom card carousel */
+  const cardsEl = document.getElementById('map-cards');
+  cardsEl.style.display = located.length ? 'flex' : 'none';
+  cardsEl.innerHTML = located.map(p => {
+    const photo = p.photoId ? S.photos[p.photoId] : null;
+    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+    const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+    const col   = personColor(p.id);
+    return `<button class="map-card${p.id===S.mapSel?' sel':''}" data-id="${p.id}" onclick="mapCardTap('${p.id}')">
+      <div class="map-card-av" style="background:${photo?'#1e2130':col}">
+        ${photo ? `<img src="${photo}"/>` : `<span>${eh(init)}</span>`}
+      </div>
+      <div class="map-card-info">
+        <div class="map-card-name">${eh(name)}</div>
+        ${p.location   ? `<div class="map-card-sub">📍 ${eh(p.location)}</div>`   : ''}
+        ${p.occupation ? `<div class="map-card-sub">💼 ${eh(p.occupation)}</div>` : ''}
+        <div class="map-card-cta">Tap for profile ›</div>
+      </div>
+    </button>`;
+  }).join('');
+
+  setTimeout(() => {
+    leafMap.invalidateSize();
+    if (S.mapSel)            mapSelect(S.mapSel, { fly:true, scroll:true });
+    else if (located.length) mapFitAll(false);
+  }, 80);
+}
+
+function mapFitAll(animate = true) {
+  const located = mapLocated();
+  if (!located.length) return;
+  leafMap.fitBounds(L.latLngBounds(located.map(p => [p.lat, p.lng])), {
+    paddingTopLeft:[40,70], paddingBottomRight:[40,200], maxZoom:10, animate
+  });
+}
+
+function mapSelect(id, opts = {}) {
+  const p = S.data.people[id];
+  if (!p || p.lat == null || p.lng == null) return;
+  S.mapSel = id;
+
+  /* Highlight the marker (pulse ring) */
+  mapMarkerRefs.forEach(r => {
+    const hit = r.ids.includes(id);
+    const el  = r.marker.getElement()?.querySelector('.mk');
+    if (el) el.classList.toggle('mk-sel', hit);
+    r.marker.setZIndexOffset(hit ? 1000 : 0);
+  });
+
+  /* Highlight + center the card */
+  const cardsEl = document.getElementById('map-cards');
+  cardsEl.querySelectorAll('.map-card').forEach(c => c.classList.toggle('sel', c.dataset.id === id));
+  if (opts.scroll !== false) {
+    const card = cardsEl.querySelector(`.map-card[data-id="${id}"]`);
+    if (card) {
+      mapSuppressScroll = true;
+      cardsEl.scrollTo({ left: card.offsetLeft - (cardsEl.clientWidth - card.offsetWidth)/2, behavior:'smooth' });
+      setTimeout(() => { mapSuppressScroll = false; }, 650);
+    }
+  }
+
+  mapDrawRelLines(id);
+
+  if (opts.fly !== false) {
+    /* Offset center downward so the marker sits above the carousel */
+    const z  = Math.min(Math.max(leafMap.getZoom(), 6), 11);
+    const pt = leafMap.project([p.lat, p.lng], z).add([0, 70]);
+    leafMap.flyTo(leafMap.unproject(pt, z), z, { duration:.8 });
+  }
+}
+
+function mapCardTap(id) {
+  if (S.mapSel === id) modalOpen({ personId:id, mode:'view' });
+  else mapSelect(id);
+}
+
+function mapCardScrollSettled() {
+  const el = document.getElementById('map-cards');
+  if (!el || S.view !== 'map') return;
+  const center = el.scrollLeft + el.clientWidth/2;
+  let best = null, bestD = Infinity;
+  el.querySelectorAll('.map-card').forEach(c => {
+    const d = Math.abs(c.offsetLeft + c.offsetWidth/2 - center);
+    if (d < bestD) { bestD = d; best = c; }
+  });
+  if (best && best.dataset.id !== S.mapSel) mapSelect(best.dataset.id, { fly:true, scroll:false });
+}
+
+/* ── Relationship arcs from the selected person ── */
+function mapClearLines() { mapLines.forEach(l => l.remove()); mapLines = []; }
+
+function arcPoints(a, b) {
+  /* Quadratic bezier in lat/lng space with a perpendicular bow */
+  const mx = (a.lat + b.lat)/2, my = (a.lng + b.lng)/2;
+  const dx = b.lat - a.lat,     dy = b.lng - a.lng;
+  const cx = mx - dy * 0.18,    cy = my + dx * 0.18;
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i/48;
+    pts.push([
+      (1-t)*(1-t)*a.lat + 2*(1-t)*t*cx + t*t*b.lat,
+      (1-t)*(1-t)*a.lng + 2*(1-t)*t*cy + t*t*b.lng
+    ]);
+  }
+  return pts;
+}
+
+function mapDrawRelLines(id) {
+  mapClearLines();
+  const legendEl = document.getElementById('map-legend');
+  const p  = S.data.people[id];
+  const hl = p ? computeHighlight(id) : null;
+  if (!hl) { legendEl.style.display = 'none'; return; }
+
+  const present = new Set();
+  [['parent', hl.parents], ['child', hl.children], ['spouse', hl.spouses], ['sibling', hl.siblings]]
+    .forEach(([type, set]) => {
+      set.forEach(rid => {
+        const r = S.data.people[rid];
+        if (!r || r.lat == null || r.lng == null) return;
+        if (Math.abs(r.lat - p.lat) < 1e-4 && Math.abs(r.lng - p.lng) < 1e-4) return;
+        mapLines.push(L.polyline(
+          arcPoints({lat:p.lat, lng:p.lng}, {lat:r.lat, lng:r.lng}),
+          { color: RC[type], weight: 2.5, opacity: .85, dashArray: '2 7', lineCap: 'round' }
+        ).addTo(leafMap));
+        present.add(type);
+      });
+    });
+
+  if (present.size) {
+    const LBL = { parent:'Parent', child:'Child', spouse:'Spouse', sibling:'Sibling' };
+    legendEl.innerHTML = [...present].map(t =>
+      `<span class="legend-item"><span class="legend-line legend-dash" style="--c:${RC[t]}"></span>${LBL[t]}</span>`).join('');
+    legendEl.style.display = 'flex';
+  } else legendEl.style.display = 'none';
+}
+
+/* ── Map bottom sheets (people at a place / people not on the map) ── */
+function mapSheetClose() { document.getElementById('map-sheet-overlay')?.remove(); }
+
+function mapSheetOpen(titleHtml, itemsHtml) {
+  mapSheetClose();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="map-sheet-overlay" class="sheet-overlay" onclick="if(event.target.id==='map-sheet-overlay')mapSheetClose()">
+      <div class="search-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div class="picker-header"><div class="picker-title">${titleHtml}</div></div>
+        <div class="sheet-list">${itemsHtml}</div>
+      </div>
+    </div>`);
+}
+
+function mapSheetItem(p, sub, onclick) {
+  const photo = p.photoId ? S.photos[p.photoId] : null;
+  const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+  const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+  const avStyle = photo
+    ? `background:#1e2130;background-image:url('${photo}');background-size:cover;background-position:center`
+    : `background:${personColor(p.id)}`;
+  return `<button class="picker-item" onclick="${onclick}">
+    <div class="picker-item-avatar" style="${avStyle}">${!photo ? `<span>${eh(init)}</span>` : ''}</div>
+    <div class="picker-item-info">
+      <div class="picker-item-name">${eh(name)}</div>
+      <div class="picker-item-sub">${eh(sub)}</div>
+    </div>
+    <span class="picker-item-arrow">›</span>
+  </button>`;
+}
+
+function mapPlaceSheetOpen(key) {
+  const people = mapLocated().filter(p => mapGroupKey(p) === key);
+  if (!people.length) return;
+  const place = people[0].location || 'This location';
+  mapSheetOpen(`📍 <strong>${eh(place)}</strong> · ${people.length} ${people.length===1?'person':'people'}`,
+    people.map(p => mapSheetItem(p, [p.occupation, p.location].filter(Boolean).join(' · ') || 'Tap to view',
+      `mapSheetClose();mapSelect('${p.id}')`)).join(''));
+}
+
+function unmappedOpen() {
+  const unmapped = Object.values(S.data.people)
+    .filter(p => p.lat == null || p.lng == null)
+    .sort((a,b) => (a.firstName||'').localeCompare(b.firstName||''));
+  if (!unmapped.length) return;
+  mapSheetOpen('Get everyone on the map', unmapped.map(p =>
+    mapSheetItem(p,
+      p.location ? `📍 ${p.location} — tap to locate` : 'No location yet — tap to add one',
+      `unmappedPick('${p.id}')`)).join(''));
+}
+
+async function unmappedPick(id) {
+  mapSheetClose();
+  const p = S.data.people[id];
+  if (!p) return;
+  /* Has a location string but no coords: retry geocoding before asking to edit */
+  if (p.location) {
+    const coords = await geocode(p.location);
+    if (coords) {
+      p.lat = coords.lat; p.lng = coords.lng;
+      S.mapSel = id;
+      dataSave();
+      mapRender();
+      return;
+    }
+  }
+  modalOpen({ personId:id, mode:'edit' });
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1229,6 +1638,9 @@ function navSwitch(view) {
   S.view = view;
   document.getElementById('tree-view').style.display = view==='tree' ? '' : 'none';
   document.getElementById('map-view').style.display  = view==='map'  ? '' : 'none';
+  /* Fit & refresh act on the tree only */
+  document.getElementById('btn-fit').style.display     = view==='tree' ? '' : 'none';
+  document.getElementById('btn-refresh').style.display = view==='tree' ? '' : 'none';
   document.querySelectorAll('.nav-btn[data-view]').forEach(b =>
     b.classList.toggle('active', b.dataset.view===view)
   );
@@ -1722,7 +2134,8 @@ async function mSave() {
     if (isNew) personAddRel(contextId, relType, updates);
     else       personUpdate(personId, updates);
     dataSave(); treeRender(); headerUpdate(); modalClose();
-    if (isNew) treeFit();
+    if (S.view === 'map') mapRender();
+    if (isNew && S.view === 'tree') treeFit();
   } catch (err) {
     console.error(err);
     S.modal.saving = false;
@@ -1741,8 +2154,10 @@ async function mDelete() {
   if (!confirm(msg)) return;
   if (p?.photoId) { await photoDelete(p.photoId); delete S.photos[p.photoId]; }
   if (S.highlight === personId) S.highlight = null;
+  if (S.mapSel === personId) S.mapSel = null;
   personDelete(personId);
   dataSave(); treeRender(); headerUpdate(); modalClose();
+  if (S.view === 'map') mapRender();
 }
 
 /* ═══════════════════════════════════════════════════════════════

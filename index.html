@@ -475,7 +475,7 @@ input.picker-search{width:100%}
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
 /* ALWAYS bump APP_VERSION on every release — it is shown as a badge on the UI */
-const APP_VERSION = 'v3.1';
+const APP_VERSION = 'v3.2';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
@@ -533,7 +533,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   treeInit();
   mapInit();
   treeRender();
-  treeFit();
+  treeHome();
   headerUpdate();
   navSetup();
   document.getElementById('app-version').textContent = APP_VERSION;
@@ -938,7 +938,7 @@ function linkExisting(contextId, relType, targetId) {
   dataSave();
   treeRender();
   headerUpdate();
-  treeFit();
+  treeHome(targetId);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -966,52 +966,22 @@ function treeInit() {
   svg.call(treeZoom.transform, d3.zoomIdentity.translate(w / 2, h * 0.35));
 }
 
-/* BFS generation assignment */
-function assignGenerations() {
-  const people = S.data.people;
-  const gen    = {};
-  const visited = new Set();
-
-  /* Explicit sibling links put both people on the same row */
-  const sibAdj = {};
-  (S.data.links || []).forEach(lk => {
-    if (lk.type !== 'sibling') return;
-    (sibAdj[lk.a] ||= []).push(lk.b);
-    (sibAdj[lk.b] ||= []).push(lk.a);
-  });
-
-  /* BFS from the root, then from any still-unvisited person (disconnected parts) */
-  const starts = [S.data.rootId, ...Object.keys(people)];
-  starts.forEach(startId => {
-    if (visited.has(startId) || !people[startId]) return;
-    const queue = [{ id: startId, g: 0 }];
-    while (queue.length) {
-      const { id, g } = queue.shift();
-      if (visited.has(id) || !people[id]) continue;
-      visited.add(id);
-      gen[id] = g;
-      const p = people[id];
-      if (p.spouseId && !visited.has(p.spouseId))
-        queue.push({ id: p.spouseId, g });
-      (p.children || []).forEach(c => { if (!visited.has(c)) queue.push({ id: c, g: g + 1 }); });
-      (p.parents  || []).forEach(par => { if (!visited.has(par)) queue.push({ id: par, g: g - 1 }); });
-      (sibAdj[id] || []).forEach(s => { if (!visited.has(s)) queue.push({ id: s, g }); });
-    }
-  });
-  return gen;
-}
-
-/* Deterministic hierarchical layout: couples side by side, children centered
-   under their parents, every subtree in its own horizontal band — no overlaps,
-   no crossing lines. Returns nodeById map. Caches to S._pos. */
-function layoutNodes(gen) {
+/* Deterministic family-graph layout.
+   - Couples form one unit; rows come from walking spouse/parent/child edges
+     (never sibling links, which only draw as dashed curves).
+   - Ancestors of married-in spouses are placed INLINE: directly above the
+     unit they married into, on the side of that spouse — not as far-away
+     separate trees.
+   - Every branch owns an exclusive x-interval, so overlaps are impossible.
+   Returns nodeById map. Caches to S._pos. */
+function layoutNodes() {
   const people = S.data.people;
   const ids    = Object.keys(people);
   if (!ids.length) return {};
 
   const H_SLOT   = NODE_R * 2 + 40;  // horizontal footprint per person (room for labels)
-  const SIB_GAP  = 36;               // gap between sibling subtrees
-  const ROOT_GAP = 130;              // gap between separate family branches
+  const SIB_GAP  = 36;               // gap between adjacent branches
+  const ROOT_GAP = 130;              // gap between unrelated components
 
   /* 1. Group people into units: a spouse couple is one unit, singles their own */
   const unitOf = {};
@@ -1019,7 +989,7 @@ function layoutNodes(gen) {
   ids.forEach(id => {
     if (unitOf[id]) return;
     const p = people[id];
-    const u = { members: [id], children: [], parent: null, x: 0 };
+    const u = { members: [id], down: [], up: [], row: 0, x: 0 };
     if (p.spouseId && people[p.spouseId] && !unitOf[p.spouseId]) u.members.push(p.spouseId);
     /* Blood-line member (has parents in the tree) goes first for tidier elbows */
     if (u.members.length === 2) {
@@ -1030,53 +1000,101 @@ function layoutNodes(gen) {
     units.push(u);
   });
 
-  /* 2. Hang each child unit under the unit containing its parent(s) */
-  units.forEach(u => {
+  /* 2. Spanning traversal over the family graph. Rows are derived here, so a
+     parent unit is ALWAYS exactly one row above its child unit. Each unit is
+     claimed once: either below its parents (down) or above the spouse who
+     married into the branch (up). */
+  const visited = new Set();
+  function build(u, row) {
+    visited.add(u);
+    u.row = row;
+    /* Children units below */
     u.members.forEach(m => {
       (people[m].children || []).forEach(cid => {
         const cu = unitOf[cid];
-        if (cu && cu !== u && !cu.parent) { cu.parent = u; u.children.push(cu); }
+        if (cu && !visited.has(cu)) { build(cu, row + 1); u.down.push(cu); }
       });
     });
-  });
+    /* In-law ancestor units above, tagged with which member they belong to */
+    u.members.forEach((m, mi) => {
+      const parentUnits = [...new Set((people[m].parents || [])
+        .map(pid => unitOf[pid]).filter(Boolean))];
+      parentUnits.forEach(pu => {
+        if (!visited.has(pu)) { build(pu, row - 1); u.up.push({ unit: pu, side: mi }); }
+      });
+    });
+    /* Children whose spouse brings a left-side family go left, right-side go
+       right — keeps each in-law branch next to the child it connects to and
+       out of the way of this unit's own bus bar. */
+    const sideOf = c => c.up.length ? (c.up.every(b => b.side === 0) ? -1 : 1) : 0;
+    u.down.sort((a, b) => sideOf(a) - sideOf(b));
+  }
 
-  /* 3. Tidy recursive placement: each subtree owns an exclusive x-interval */
-  const shiftTree = (u, dx) => { u.x += dx; u.children.forEach(c => shiftTree(c, dx)); };
+  const anchors = [];
+  const rootUnit = unitOf[S.data.rootId];
+  if (rootUnit) { build(rootUnit, 0); anchors.push(rootUnit); }
+  units.forEach(u => { if (!visited.has(u)) { build(u, 0); anchors.push(u); } });
+
+  /* 3. Recursive placement: [left in-law branches] [children] [right in-law
+     branches], each in its own exclusive x-interval */
+  const branchesOf = u => [
+    ...u.up.filter(b => b.side === 0).map(b => b.unit),
+    ...u.down,
+    ...u.up.filter(b => b.side > 0).map(b => b.unit),
+  ];
+  const shiftTree = (u, dx) => { u.x += dx; branchesOf(u).forEach(c => shiftTree(c, dx)); };
   function place(u, left) {
-    const selfW = u.members.length * H_SLOT;
-    if (!u.children.length) { u.x = left + selfW / 2; return left + selfW; }
+    const selfW    = u.members.length * H_SLOT;
+    const leftUps  = u.up.filter(b => b.side === 0).map(b => b.unit);
+    const rightUps = u.up.filter(b => b.side > 0).map(b => b.unit);
+
+    /* Left in-law branches first; the unit itself must stay clear of them */
     let cur = left;
-    u.children.forEach((c, i) => { if (i) cur += SIB_GAP; cur = place(c, cur); });
-    let cx = (u.children[0].x + u.children[u.children.length - 1].x) / 2;
-    if (cx < left + selfW / 2) {          // unit wider than its children span
-      const shift = left + selfW / 2 - cx;
-      u.children.forEach(c => shiftTree(c, shift));
+    leftUps.forEach(b => { if (cur > left) cur += SIB_GAP; cur = place(b, cur); });
+    const downLeft = (cur > left) ? cur + SIB_GAP : left;
+
+    /* Own children below */
+    cur = downLeft;
+    u.down.forEach((b, i) => { if (i) cur += SIB_GAP; cur = place(b, cur); });
+
+    /* Center on own children (bus-bar alignment), clamped clear of the left region */
+    let cx = u.down.length
+      ? (u.down[0].x + u.down[u.down.length - 1].x) / 2
+      : downLeft + selfW / 2;
+    if (cx - selfW / 2 < downLeft) {
+      const shift = downLeft + selfW / 2 - cx;
+      u.down.forEach(b => shiftTree(b, shift));
       cur += shift; cx += shift;
     }
     u.x = cx;
-    return Math.max(cur, cx + selfW / 2);
+
+    /* Right in-law branches start clear of the unit itself */
+    cur = Math.max(cur, cx + selfW / 2);
+    rightUps.forEach(b => { cur += SIB_GAP; cur = place(b, cur); });
+    return cur;
   }
 
-  /* 4. Lay out each branch left to right, biggest family first */
-  const sizeOf = u => 1 + u.children.reduce((a, c) => a + sizeOf(c), 0);
-  const roots  = units.filter(u => !u.parent).sort((a, b) => sizeOf(b) - sizeOf(a));
+  /* 4. Main family first, then remaining components by size */
+  const sizeOf = u => 1 + branchesOf(u).reduce((a, c) => a + sizeOf(c), 0);
+  const rest = anchors.slice(1).sort((a, b) => sizeOf(b) - sizeOf(a));
   let cursor = 0;
-  roots.forEach((r, i) => { if (i) cursor += ROOT_GAP; cursor = place(r, cursor); });
+  [...anchors.slice(0, 1), ...rest].forEach((r, i) => {
+    if (i) cursor += ROOT_GAP;
+    cursor = place(r, cursor);
+  });
 
   /* 5. Unit → person positions, centered around x = 0 */
   const nodeById = {};
   units.forEach(u => {
     const n = u.members.length;
     u.members.forEach((m, i) => {
-      const x = u.x + (i - (n - 1) / 2) * H_SLOT;
-      const y = (gen[m] ?? 0) * V_GAP;
-      nodeById[m] = { id: m, gen: gen[m] ?? 0, x, y };
+      nodeById[m] = { id: m, x: u.x + (i - (n - 1) / 2) * H_SLOT, y: u.row * V_GAP };
     });
   });
   const xs = Object.values(nodeById).map(n => n.x);
-  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
   Object.values(nodeById).forEach(n => {
-    n.x -= cx;
+    n.x -= midX;
     S._pos[n.id] = { x: n.x, y: n.y };
   });
   return nodeById;
@@ -1111,15 +1129,14 @@ function treeRender() {
   if (!ids.length) return;
 
   /* Re-run layout only when data changed */
-  const gen      = assignGenerations();
-  const nodeById = S._layoutDirty ? layoutNodes(gen) : (() => {
+  const nodeById = S._layoutDirty ? layoutNodes() : (() => {
     /* Rebuild nodeById from cached positions */
     const nb = {};
     ids.forEach(id => {
       if (!S._pos[id]) { S._layoutDirty = true; }
-      nb[id] = { id, gen: gen[id] ?? 0, x: (S._pos[id] || {}).x || 0, y: (S._pos[id] || {}).y || 0 };
+      nb[id] = { id, x: (S._pos[id] || {}).x || 0, y: (S._pos[id] || {}).y || 0 };
     });
-    if (S._layoutDirty) return layoutNodes(gen);
+    if (S._layoutDirty) return layoutNodes();
     return nb;
   })();
   const animateIn = S._layoutDirty;  // play entrance animation only when layout changed
@@ -1174,7 +1191,8 @@ function treeRender() {
       if (!drawnBus.has(pairKey)) {
         drawnBus.add(pairKey);
         const midX  = (src.x + spouseNode.x) / 2;
-        const dropY = src.y + V_GAP * 0.40;
+        /* Stagger drop heights so neighboring family buses never overlap */
+        const dropY = src.y + V_GAP * (0.34 + (drawnBus.size % 4) * 0.05);
         const childNodes = sharedKids.map(c => nodeById[c]).filter(Boolean);
         const xs = childNodes.map(c => c.x);
         const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -1219,8 +1237,6 @@ function treeRender() {
     const n  = nodeById[id]; if (!n) return;
     const photo = p.photoId ? S.photos[p.photoId] : null;
     const init  = initials(p);
-    const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
-    const loc   = p.location ? p.location.split(',')[0] : '';
     const isRoot = id === S.data.rootId;
 
     /* Highlight ring */
@@ -1263,12 +1279,12 @@ function treeRender() {
             stroke="${photo ? ringCol : 'rgba(255,255,255,.28)'}" stroke-width="2.5"
             filter="url(#node-glow)"/>
           ${face}
-          <text y="${NODE_R + 18}" text-anchor="middle" fill="#e2e8f5" font-size="12.5"
+          <text y="${NODE_R + 18}" text-anchor="middle" fill="#e2e8f5" font-size="12"
             font-weight="600" font-family="system-ui" pointer-events="none"
-            stroke="#0f1117" stroke-width="3.5" paint-order="stroke">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
-          ${loc ? `<text y="${NODE_R + 32}" text-anchor="middle" fill="#8892a4"
+            stroke="#0f1117" stroke-width="3.5" paint-order="stroke">${eh((p.firstName || 'Unnamed').trim())}${genderMark ? ' ' + genderMark : ''}</text>
+          ${p.lastName ? `<text y="${NODE_R + 32}" text-anchor="middle" fill="#8892a4"
             font-size="10.5" font-family="system-ui" pointer-events="none"
-            stroke="#0f1117" stroke-width="3" paint-order="stroke">${eh(loc)}</text>` : ''}
+            stroke="#0f1117" stroke-width="3" paint-order="stroke">${eh(p.lastName.trim())}</text>` : ''}
         </g>
       </g>`;
     idx++;
@@ -1340,11 +1356,33 @@ function treeFit() {
   } catch {}
 }
 
+/* Fit if the whole tree stays readable; otherwise zoom to a readable level
+   centered on focusId (or the middle of the tree) */
+function treeHome(focusId) {
+  const svg = document.getElementById('tree-svg');
+  const g   = document.getElementById('tree-g');
+  if (!g) return;
+  try {
+    const bbox = g.getBBox();
+    if (!bbox.width || !bbox.height) return;
+    const w = svg.clientWidth  || window.innerWidth;
+    const h = svg.clientHeight || (window.innerHeight - 112);
+    const pad = Math.min(60, w * 0.08);
+    const fitScale = Math.min((w - pad*2) / bbox.width, (h - pad*2) / bbox.height, 1.5);
+    if (fitScale >= 0.45) { treeFit(); return; }
+    const k = 0.55;
+    const f = (focusId && S._pos[focusId]) ? S._pos[focusId]
+            : { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
+    d3.select('#tree-svg').transition().duration(500)
+      .call(treeZoom.transform, d3.zoomIdentity.translate(w/2 - f.x*k, h/2 - f.y*k).scale(k));
+  } catch {}
+}
+
 function layoutRefresh() {
   S._pos = {};
   S._layoutDirty = true;
   treeRender();
-  treeFit();
+  treeHome(S.highlight);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2152,11 +2190,12 @@ async function mSave() {
       updates.lng = prevPerson?.lng ?? null;
     }
     const isNew = initMode === 'add';
-    if (isNew) personAddRel(contextId, relType, updates);
+    let newId = null;
+    if (isNew) newId = personAddRel(contextId, relType, updates);
     else       personUpdate(personId, updates);
     dataSave(); treeRender(); headerUpdate(); modalClose();
     if (S.view === 'map') mapRender();
-    if (isNew && S.view === 'tree') treeFit();
+    if (isNew && S.view === 'tree') treeHome(newId);
   } catch (err) {
     console.error(err);
     S.modal.saving = false;
@@ -2241,7 +2280,7 @@ function doImportClick() {
       dataSave();
       treeRender();
       headerUpdate();
-      treeFit();
+      treeHome();
     } catch { alert('Could not read the file. Make sure it is a valid Family Tree backup.'); }
   };
   input.click();

@@ -40,7 +40,41 @@ button{font-family:inherit}
 #tree-view,#map-view{position:absolute;inset:0}
 
 /* ── Tree ── */
-#tree-svg{width:100%;height:100%;display:block;background:#0f1117;touch-action:none}
+#tree-svg{width:100%;height:100%;display:block;touch-action:none;
+  background-color:#0f1117;
+  background-image:radial-gradient(circle,rgba(74,144,226,.10) 1px,transparent 1.4px),
+    radial-gradient(140% 90% at 50% 0%,#171c2c 0%,#0f1117 55%);
+  background-size:26px 26px,100% 100%}
+.node-inner{transform-box:fill-box;transform-origin:center;
+  animation:node-in .45s cubic-bezier(.34,1.56,.64,1) backwards}
+@keyframes node-in{from{transform:scale(0)}to{transform:scale(1)}}
+.ring-pulse{transform-box:fill-box;transform-origin:center;
+  animation:tree-ring-pulse 1.7s ease-out infinite}
+@keyframes tree-ring-pulse{0%{transform:scale(.92);opacity:1}
+  70%{transform:scale(1.16);opacity:.25}100%{transform:scale(1.2);opacity:0}}
+
+/* Tree legend (top pill, matches map legend) */
+#tree-legend{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:5;
+  display:flex;gap:12px;background:rgba(15,17,23,.85);border:1px solid #1e2538;
+  border-radius:14px;padding:6px 12px;backdrop-filter:blur(8px);pointer-events:none}
+
+/* Tree selection card (bottom, same glass style as map cards) */
+#tree-card{position:absolute;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  transform:translateX(-50%);width:min(calc(100% - 24px),420px);z-index:6;
+  display:none;flex-direction:column;gap:10px;
+  background:rgba(18,21,31,.92);border:1px solid #2e3a56;border-radius:18px;
+  padding:12px 14px;backdrop-filter:blur(12px);box-shadow:0 8px 24px rgba(0,0,0,.45);
+  animation:card-up .25s ease}
+@keyframes card-up{from{transform:translate(-50%,12px);opacity:0}
+  to{transform:translate(-50%,0);opacity:1}}
+.tree-card-top{display:flex;align-items:center;gap:12px}
+.tree-card-btns{display:flex;gap:8px}
+.tree-card-btn{flex:1;border:none;border-radius:11px;padding:11px 8px;
+  font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.tree-card-btn.primary{background:#4A90E2;color:#fff}
+.tree-card-btn.primary:active{background:#357abd}
+.tree-card-btn.ghost{background:#1e2538;color:#a0aec0;border:1px solid #2e3a56}
+.tree-card-btn.ghost:active{background:#2a3350}
 
 /* ── Map ── */
 #leaflet-map{width:100%;height:100%}
@@ -62,7 +96,8 @@ button{font-family:inherit}
   display:flex;gap:12px;background:rgba(15,17,23,.85);border:1px solid #1e2538;
   border-radius:14px;padding:6px 12px;backdrop-filter:blur(8px);pointer-events:none}
 .legend-item{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#8892a4;font-weight:600}
-.legend-line{width:16px;height:0;border-top:2.5px dashed var(--c);border-radius:2px}
+.legend-line{width:16px;height:0;border-top:2.5px solid var(--c);border-radius:2px}
+.legend-line.legend-dash{border-top-style:dashed}
 
 /* Floating fit-all button */
 #map-fit{position:absolute;right:12px;bottom:158px;z-index:1000;width:44px;height:44px;
@@ -366,11 +401,36 @@ input.picker-search{width:100%}
   <main id="main">
     <div id="tree-view">
       <svg id="tree-svg">
+        <defs>
+          <radialGradient id="g-male" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#1d4ed8"/>
+          </radialGradient>
+          <radialGradient id="g-female" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#f472b6"/><stop offset="100%" stop-color="#9d174d"/>
+          </radialGradient>
+          <radialGradient id="g-nb" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#c084fc"/><stop offset="100%" stop-color="#6d28d9"/>
+          </radialGradient>
+          <radialGradient id="g-def" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#6faae9"/><stop offset="100%" stop-color="#2563eb"/>
+          </radialGradient>
+          <radialGradient id="g-root" cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stop-color="#a5b4fc"/><stop offset="100%" stop-color="#4f46e5"/>
+          </radialGradient>
+          <filter id="node-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.5"/>
+          </filter>
+        </defs>
         <defs id="tree-defs"></defs>
         <g id="tree-g"></g>
-        <g id="tree-legend-fixed"></g>
       </svg>
-      <div id="tap-hint">Tap a person to highlight relatives · Tap again to view details</div>
+      <div id="tree-legend">
+        <span class="legend-item"><span class="legend-line" style="--c:#f97316"></span>Parent-Child</span>
+        <span class="legend-item"><span class="legend-line legend-dash" style="--c:#ec4899"></span>Spouse ♥</span>
+        <span class="legend-item"><span class="legend-line legend-dash" style="--c:#a855f7"></span>Sibling</span>
+      </div>
+      <div id="tree-card"></div>
+      <div id="tap-hint">Tap a person to select them · Tap again for their full profile</div>
     </div>
     <div id="map-view" style="display:none">
       <div id="leaflet-map"></div>
@@ -1041,6 +1101,7 @@ function treeRender() {
     if (S._layoutDirty) return layoutNodes(gen);
     return nb;
   })();
+  const animateIn = S._layoutDirty;  // play entrance animation only when layout changed
   S._layoutDirty = false;
 
   /* Clip paths for photos */
@@ -1131,6 +1192,7 @@ function treeRender() {
   });
 
   /* ── NODES ── */
+  let idx = 0;
   ids.forEach(id => {
     const p  = people[id];
     const n  = nodeById[id]; if (!n) return;
@@ -1141,10 +1203,10 @@ function treeRender() {
     const isRoot = id === S.data.rootId;
 
     /* Highlight ring */
-    let ringColor = 'none';
+    let ringColor = 'none', selfSel = false;
     let nodeOpacity = 1;
     if (hl) {
-      if (hl.self.has(id))          ringColor = RC.self;
+      if (hl.self.has(id))          { ringColor = RC.self; selfSel = true; }
       else if (hl.parents.has(id))  ringColor = RC.parent;
       else if (hl.children.has(id)) ringColor = RC.child;
       else if (hl.spouses.has(id))  ringColor = RC.spouse;
@@ -1152,8 +1214,10 @@ function treeRender() {
       else nodeOpacity = 0.22;
     }
 
-    const genderFill  = { male:'#2563eb', female:'#be185d', nonbinary:'#7c3aed' };
-    const baseColor   = isRoot ? '#6366f1' : (genderFill[p.gender] || '#4A90E2');
+    const gradId = isRoot ? 'g-root'
+      : ({ male:'g-male', female:'g-female', nonbinary:'g-nb' }[p.gender] || 'g-def');
+    const ringCol = { male:'#3b82f6', female:'#ec4899', nonbinary:'#a855f7' }[p.gender]
+      || (isRoot ? '#818cf8' : '#4A90E2');
     const genderMark  = { male:'♂', female:'♀', nonbinary:'⚧' }[p.gender] || '';
     const face = photo
       ? `<image href="${photo}" x="${-NODE_R}" y="${-NODE_R}"
@@ -1163,26 +1227,30 @@ function treeRender() {
            font-size="${(NODE_R*.55)|0}" font-weight="700" font-family="system-ui"
            pointer-events="none">${eh(init)}</text>`;
 
+    const innerStyle = animateIn
+      ? ` style="animation-delay:${Math.min(idx * 30, 420)}ms"`
+      : ` style="animation:none"`;
+
     svg += `
       <g class="t-node" data-id="${id}" transform="translate(${n.x},${n.y})"
          style="opacity:${nodeOpacity};cursor:pointer">
-        <circle class="h-ring" r="${NODE_R + 7}" fill="none"
-          stroke="${ringColor}" stroke-width="3.5" pointer-events="none"/>
-        <circle r="${NODE_R + 5}" fill="transparent"/>
-        <circle r="${NODE_R}" fill="${photo ? '#1e2130' : baseColor}"
-          stroke="${isRoot ? '#818cf8' : baseColor}" stroke-width="2.5"/>
-        ${face}
-        <text y="${NODE_R + 17}" text-anchor="middle" fill="#c9d1e0" font-size="12"
-          font-weight="500" font-family="system-ui" pointer-events="none">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
-        ${loc ? `<text y="${NODE_R + 30}" text-anchor="middle" fill="#6b7a99"
-          font-size="10" font-family="system-ui" pointer-events="none">${eh(loc)}</text>` : ''}
-        <g class="add-rel" data-person="${id}" transform="translate(${NODE_R - 5},${-NODE_R + 5})">
-          <circle r="13" fill="#10b981" stroke="#0f1117" stroke-width="2"/>
-          <text text-anchor="middle" dominant-baseline="central" fill="white"
-            font-size="19" font-weight="700" font-family="system-ui" dy="1"
-            pointer-events="none">+</text>
+        <g class="node-inner"${innerStyle}>
+          <circle class="${selfSel ? 'ring-pulse' : ''}" r="${NODE_R + 7}" fill="none"
+            stroke="${ringColor}" stroke-width="3.5" pointer-events="none"/>
+          <circle r="${NODE_R + 5}" fill="transparent"/>
+          <circle r="${NODE_R}" fill="${photo ? '#1e2130' : `url(#${gradId})`}"
+            stroke="${photo ? ringCol : 'rgba(255,255,255,.28)'}" stroke-width="2.5"
+            filter="url(#node-glow)"/>
+          ${face}
+          <text y="${NODE_R + 18}" text-anchor="middle" fill="#e2e8f5" font-size="12.5"
+            font-weight="600" font-family="system-ui" pointer-events="none"
+            stroke="#0f1117" stroke-width="3.5" paint-order="stroke">${eh(name)}${genderMark ? ' ' + genderMark : ''}</text>
+          ${loc ? `<text y="${NODE_R + 32}" text-anchor="middle" fill="#8892a4"
+            font-size="10.5" font-family="system-ui" pointer-events="none"
+            stroke="#0f1117" stroke-width="3" paint-order="stroke">${eh(loc)}</text>` : ''}
         </g>
       </g>`;
+    idx++;
   });
 
   document.getElementById('tree-g').innerHTML = svg;
@@ -1190,52 +1258,47 @@ function treeRender() {
   /* Event listeners */
   document.querySelectorAll('.t-node').forEach(el => {
     const pid = el.dataset.id;
-    el.addEventListener('click', e => {
-      if (e.target.closest('.add-rel')) return;
+    el.addEventListener('click', () => {
       if (S.highlight === pid) {
-        /* Second tap: open detail modal */
+        /* Second tap: open full profile */
         S.highlight = null;
         treeRender();
         modalOpen({ personId: pid, mode: 'view' });
       } else {
-        /* First tap: highlight */
+        /* First tap: select — relatives light up, action card slides in */
         S.highlight = pid;
         treeRender();
       }
     });
-    const btn = el.querySelector('.add-rel');
-    if (btn) btn.addEventListener('click', e => {
-      e.stopPropagation();
-      relPickerOpen(btn.dataset.person);
-    });
   });
 
-  /* Legend — horizontal bar fixed at bottom of SVG */
-  const svgEl2 = document.getElementById('tree-svg');
-  const svgW = svgEl2.clientWidth  || window.innerWidth;
-  const svgH = svgEl2.clientHeight || (window.innerHeight - 112);
-  const hItems = [
-    { color: RC.parent,  label: 'Parent-Child', dashed: false },
-    { color: RC.spouse,  label: 'Spouse',        dashed: true,  sym: '♥' },
-    { color: RC.sibling, label: 'Sibling',       dashed: true },
-  ];
-  const iW = 112, hPad = 12;
-  const barW = hItems.length * iW + hPad * 2;
-  const bx = Math.max(8, (svgW - barW) / 2);
-  const by = svgH - 36;
-  let hLeg = `<rect x="${bx-hPad}" y="${by-8}" width="${barW+hPad}" height="28" rx="7"
-    fill="#0a0d14" fill-opacity="0.88" stroke="#1e2538" pointer-events="none"/>`;
-  hItems.forEach((it, i) => {
-    const x = bx + i * iW, y = by + 6;
-    hLeg += `<line x1="${x}" y1="${y}" x2="${x+22}" y2="${y}" stroke="${it.color}"
-        stroke-width="2.5" ${it.dashed?'stroke-dasharray="5,3"':''} stroke-linecap="round"
-        pointer-events="none"/>
-      ${it.sym ? `<text x="${x+11}" y="${y}" text-anchor="middle" dominant-baseline="middle"
-        fill="${it.color}" font-size="10" font-family="system-ui" pointer-events="none">${it.sym}</text>` : ''}
-      <text x="${x+28}" y="${y}" dominant-baseline="middle" fill="#6b7a99"
-        font-size="11" font-family="system-ui" pointer-events="none">${it.label}</text>`;
-  });
-  document.getElementById('tree-legend-fixed').innerHTML = hLeg;
+  treeCardUpdate();
+}
+
+/* Bottom action card for the selected person */
+function treeCardUpdate() {
+  const el = document.getElementById('tree-card');
+  const p  = S.highlight ? S.data.people[S.highlight] : null;
+  if (!p) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const photo = p.photoId ? S.photos[p.photoId] : null;
+  const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+  const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
+  const sub   = [p.location, p.occupation].filter(Boolean).join(' · ');
+  el.innerHTML = `
+    <div class="tree-card-top">
+      <div class="map-card-av" style="background:${photo ? '#1e2130' : personColor(p.id)}">
+        ${photo ? `<img src="${photo}"/>` : `<span>${eh(init)}</span>`}
+      </div>
+      <div class="map-card-info">
+        <div class="map-card-name">${eh(name)}</div>
+        ${sub ? `<div class="map-card-sub">${eh(sub)}</div>` : ''}
+      </div>
+    </div>
+    <div class="tree-card-btns">
+      <button class="tree-card-btn primary" onclick="relPickerOpen('${p.id}')">➕ Add relative</button>
+      <button class="tree-card-btn ghost" onclick="modalOpen({personId:'${p.id}',mode:'view'})">👤 Profile</button>
+    </div>`;
+  el.style.display = 'flex';
 }
 
 function treeFit() {
@@ -1487,7 +1550,7 @@ function mapDrawRelLines(id) {
   if (present.size) {
     const LBL = { parent:'Parent', child:'Child', spouse:'Spouse', sibling:'Sibling' };
     legendEl.innerHTML = [...present].map(t =>
-      `<span class="legend-item"><span class="legend-line" style="--c:${RC[t]}"></span>${LBL[t]}</span>`).join('');
+      `<span class="legend-item"><span class="legend-line legend-dash" style="--c:${RC[t]}"></span>${LBL[t]}</span>`).join('');
     legendEl.style.display = 'flex';
   } else legendEl.style.display = 'none';
 }

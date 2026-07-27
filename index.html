@@ -25,13 +25,15 @@ button{font-family:inherit}
 @media(max-width:430px){
   .header-title{font-size:16px}
   .header-right{gap:7px}
-  #app-version{display:none}
   #btn-export .btn-export-label{display:none}
   #btn-export{font-size:15px;padding:6px 10px;line-height:1}
 }
 @media(max-width:350px){#member-count{display:none}}
-#app-version{font-size:11px;color:#3d4a66;font-weight:600;letter-spacing:.3px;
-  background:#1a1f2e;border:1px solid #1e2538;border-radius:6px;padding:3px 7px}
+/* Version badge — always visible, overlaid on the active view */
+#app-version{position:absolute;top:10px;left:10px;z-index:1000;font-size:11px;
+  color:#5a6b8c;font-weight:600;letter-spacing:.3px;background:rgba(18,21,31,.82);
+  border:1px solid #1e2538;border-radius:6px;padding:3px 7px;pointer-events:none;
+  backdrop-filter:blur(6px)}
 #btn-export{background:#1e2538;border:1px solid #2e3a56;color:#a0aec0;font-size:13px;
   padding:6px 12px;border-radius:8px;cursor:pointer;transition:background .15s}
 #btn-export:hover{background:#2a3350}
@@ -390,7 +392,6 @@ input.picker-search{width:100%}
     <span class="header-title">🌳 Family Tree</span>
     <div class="header-right">
       <span id="member-count"></span>
-      <span id="app-version"></span>
       <button id="btn-search" title="Search people" onclick="searchOpen()">🔍</button>
       <button id="btn-refresh" title="Refresh layout">🔄</button>
       <button id="btn-fit" title="Fit tree to screen">⤢</button>
@@ -432,6 +433,7 @@ input.picker-search{width:100%}
       <div id="tree-card"></div>
       <div id="tap-hint">Tap a person to select them · Tap again for their full profile</div>
     </div>
+    <span id="app-version"></span>
     <div id="map-view" style="display:none">
       <div id="leaflet-map"></div>
       <button id="map-chip" style="display:none" onclick="unmappedOpen()"></button>
@@ -472,11 +474,12 @@ input.picker-search{width:100%}
    CONSTANTS
 ═══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY = 'familytree_v2';
-const APP_VERSION = 'v3.0';
+/* ALWAYS bump APP_VERSION on every release — it is shown as a badge on the UI */
+const APP_VERSION = 'v3.1';
 const DB_NAME     = 'familytree_photos';
 const DB_STORE    = 'photos';
 const NODE_R      = 36;
-const V_GAP       = 145;
+const V_GAP       = 170;
 
 /* Relationship colors */
 const RC = {
@@ -530,6 +533,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   treeInit();
   mapInit();
   treeRender();
+  treeFit();
   headerUpdate();
   navSetup();
   document.getElementById('app-version').textContent = APP_VERSION;
@@ -966,98 +970,115 @@ function treeInit() {
 function assignGenerations() {
   const people = S.data.people;
   const gen    = {};
-  const queue  = [{ id: S.data.rootId, g: 0 }];
   const visited = new Set();
 
-  while (queue.length) {
-    const { id, g } = queue.shift();
-    if (visited.has(id) || !people[id]) continue;
-    visited.add(id);
-    gen[id] = g;
-    const p = people[id];
-    if (p.spouseId && !visited.has(p.spouseId))
-      queue.push({ id: p.spouseId, g });
-    (p.children || []).forEach(c => { if (!visited.has(c)) queue.push({ id: c, g: g + 1 }); });
-    (p.parents  || []).forEach(par => { if (!visited.has(par)) queue.push({ id: par, g: g - 1 }); });
-  }
-  /* Handle disconnected people */
-  Object.keys(people).forEach(id => { if (!(id in gen)) gen[id] = 0; });
+  /* Explicit sibling links put both people on the same row */
+  const sibAdj = {};
+  (S.data.links || []).forEach(lk => {
+    if (lk.type !== 'sibling') return;
+    (sibAdj[lk.a] ||= []).push(lk.b);
+    (sibAdj[lk.b] ||= []).push(lk.a);
+  });
+
+  /* BFS from the root, then from any still-unvisited person (disconnected parts) */
+  const starts = [S.data.rootId, ...Object.keys(people)];
+  starts.forEach(startId => {
+    if (visited.has(startId) || !people[startId]) return;
+    const queue = [{ id: startId, g: 0 }];
+    while (queue.length) {
+      const { id, g } = queue.shift();
+      if (visited.has(id) || !people[id]) continue;
+      visited.add(id);
+      gen[id] = g;
+      const p = people[id];
+      if (p.spouseId && !visited.has(p.spouseId))
+        queue.push({ id: p.spouseId, g });
+      (p.children || []).forEach(c => { if (!visited.has(c)) queue.push({ id: c, g: g + 1 }); });
+      (p.parents  || []).forEach(par => { if (!visited.has(par)) queue.push({ id: par, g: g - 1 }); });
+      (sibAdj[id] || []).forEach(s => { if (!visited.has(s)) queue.push({ id: s, g }); });
+    }
+  });
   return gen;
 }
 
-/* Force-simulation layout. Returns nodeById map. Caches to S._pos. */
+/* Deterministic hierarchical layout: couples side by side, children centered
+   under their parents, every subtree in its own horizontal band — no overlaps,
+   no crossing lines. Returns nodeById map. Caches to S._pos. */
 function layoutNodes(gen) {
   const people = S.data.people;
   const ids    = Object.keys(people);
   if (!ids.length) return {};
 
-  const nodes = ids.map(id => {
-    const p   = people[id];
-    const g   = gen[id] ?? 0;
-    const cached = S._pos[id];
-    let ix, iy = g * V_GAP;
-    if (cached) {
-      ix = cached.x;
-    } else {
-      /* Smart seed: average parent X, or near spouse, or spread by index */
-      const parXs = (p.parents || []).filter(pid => S._pos[pid]).map(pid => S._pos[pid].x);
-      if (parXs.length) {
-        ix = parXs.reduce((a,b)=>a+b,0) / parXs.length;
-      } else if (p.spouseId && S._pos[p.spouseId]) {
-        ix = S._pos[p.spouseId].x + NODE_R * 2.8;
-      } else {
-        ix = (Math.random() - 0.5) * Math.max(ids.length * 90, 300);
-      }
+  const H_SLOT   = NODE_R * 2 + 40;  // horizontal footprint per person (room for labels)
+  const SIB_GAP  = 36;               // gap between sibling subtrees
+  const ROOT_GAP = 130;              // gap between separate family branches
+
+  /* 1. Group people into units: a spouse couple is one unit, singles their own */
+  const unitOf = {};
+  const units  = [];
+  ids.forEach(id => {
+    if (unitOf[id]) return;
+    const p = people[id];
+    const u = { members: [id], children: [], parent: null, x: 0 };
+    if (p.spouseId && people[p.spouseId] && !unitOf[p.spouseId]) u.members.push(p.spouseId);
+    /* Blood-line member (has parents in the tree) goes first for tidier elbows */
+    if (u.members.length === 2) {
+      const hasPar = m => (people[m].parents || []).some(pid => people[pid]);
+      if (!hasPar(u.members[0]) && hasPar(u.members[1])) u.members.reverse();
     }
-    return { id, gen: g, x: ix, y: iy };
+    u.members.forEach(m => { unitOf[m] = u; });
+    units.push(u);
   });
 
-  const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
-
-  const spouseLinks   = [];
-  const parentLinks   = [];
-  const coParentLinks = [];
-  const seenSp = new Set();
-  const seenCp = new Set();
-
-  ids.forEach(id => {
-    const p = people[id];
-    if (p.spouseId && nodeById[p.spouseId] && !seenSp.has(id + p.spouseId)) {
-      spouseLinks.push({ source: nodeById[id], target: nodeById[p.spouseId] });
-      seenSp.add(id + p.spouseId); seenSp.add(p.spouseId + id);
-    }
-    (p.children || []).forEach(cid => {
-      if (nodeById[cid]) parentLinks.push({ source: nodeById[id], target: nodeById[cid] });
-    });
-  });
-
-  /* Co-parent links: keep parents of shared children together even if not spouses */
-  ids.forEach(id => {
-    const p = people[id];
-    (p.children || []).forEach(cid => {
-      (people[cid]?.parents || []).forEach(otherId => {
-        if (otherId === id || p.spouseId === otherId) return;
-        const key = [id, otherId].sort().join('|');
-        if (seenCp.has(key) || !nodeById[otherId]) return;
-        seenCp.add(key);
-        coParentLinks.push({ source: nodeById[id], target: nodeById[otherId] });
+  /* 2. Hang each child unit under the unit containing its parent(s) */
+  units.forEach(u => {
+    u.members.forEach(m => {
+      (people[m].children || []).forEach(cid => {
+        const cu = unitOf[cid];
+        if (cu && cu !== u && !cu.parent) { cu.parent = u; u.children.push(cu); }
       });
     });
   });
 
-  const hasCached = ids.some(id => S._pos[id]);
-  d3.forceSimulation(nodes)
-    .force('y',        d3.forceY(d => d.gen * V_GAP).strength(1.0))
-    .force('x',        d3.forceX(0).strength(0.03))
-    .force('collide',  d3.forceCollide(NODE_R * 2.3).strength(0.7))
-    .force('spouse',   d3.forceLink(spouseLinks).distance(NODE_R * 2 + 8).strength(0.99))
-    .force('coparent', d3.forceLink(coParentLinks).distance(NODE_R * 2 + 8).strength(0.55))
-    .force('parent',   d3.forceLink(parentLinks).distance(V_GAP * 0.72).strength(0.18))
-    .alphaDecay(0.022)
-    .stop()
-    .tick(hasCached ? 300 : 500);
+  /* 3. Tidy recursive placement: each subtree owns an exclusive x-interval */
+  const shiftTree = (u, dx) => { u.x += dx; u.children.forEach(c => shiftTree(c, dx)); };
+  function place(u, left) {
+    const selfW = u.members.length * H_SLOT;
+    if (!u.children.length) { u.x = left + selfW / 2; return left + selfW; }
+    let cur = left;
+    u.children.forEach((c, i) => { if (i) cur += SIB_GAP; cur = place(c, cur); });
+    let cx = (u.children[0].x + u.children[u.children.length - 1].x) / 2;
+    if (cx < left + selfW / 2) {          // unit wider than its children span
+      const shift = left + selfW / 2 - cx;
+      u.children.forEach(c => shiftTree(c, shift));
+      cur += shift; cx += shift;
+    }
+    u.x = cx;
+    return Math.max(cur, cx + selfW / 2);
+  }
 
-  nodes.forEach(n => { S._pos[n.id] = { x: n.x, y: n.y }; });
+  /* 4. Lay out each branch left to right, biggest family first */
+  const sizeOf = u => 1 + u.children.reduce((a, c) => a + sizeOf(c), 0);
+  const roots  = units.filter(u => !u.parent).sort((a, b) => sizeOf(b) - sizeOf(a));
+  let cursor = 0;
+  roots.forEach((r, i) => { if (i) cursor += ROOT_GAP; cursor = place(r, cursor); });
+
+  /* 5. Unit → person positions, centered around x = 0 */
+  const nodeById = {};
+  units.forEach(u => {
+    const n = u.members.length;
+    u.members.forEach((m, i) => {
+      const x = u.x + (i - (n - 1) / 2) * H_SLOT;
+      const y = (gen[m] ?? 0) * V_GAP;
+      nodeById[m] = { id: m, gen: gen[m] ?? 0, x, y };
+    });
+  });
+  const xs = Object.values(nodeById).map(n => n.x);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  Object.values(nodeById).forEach(n => {
+    n.x -= cx;
+    S._pos[n.id] = { x: n.x, y: n.y };
+  });
   return nodeById;
 }
 
@@ -1197,7 +1218,7 @@ function treeRender() {
     const p  = people[id];
     const n  = nodeById[id]; if (!n) return;
     const photo = p.photoId ? S.photos[p.photoId] : null;
-    const init  = ((p.firstName || '')[0] + (p.lastName || '')[0]).toUpperCase() || '?';
+    const init  = initials(p);
     const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
     const loc   = p.location ? p.location.split(',')[0] : '';
     const isRoot = id === S.data.rootId;
@@ -1281,7 +1302,7 @@ function treeCardUpdate() {
   const p  = S.highlight ? S.data.people[S.highlight] : null;
   if (!p) { el.style.display = 'none'; el.innerHTML = ''; return; }
   const photo = p.photoId ? S.photos[p.photoId] : null;
-  const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+  const init  = initials(p);
   const name  = [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Unnamed';
   const sub   = [p.location, p.occupation].filter(Boolean).join(' · ');
   el.innerHTML = `
@@ -1310,7 +1331,7 @@ function treeFit() {
     if (!bbox.width || !bbox.height) return;
     const w = svg.clientWidth  || window.innerWidth;
     const h = svg.clientHeight || (window.innerHeight - 112);
-    const pad = 80;
+    const pad = Math.min(60, w * 0.08);
     const scale = Math.min((w - pad*2) / bbox.width, (h - pad*2) / bbox.height, 1.5);
     const tx = w/2 - (bbox.x + bbox.width/2) * scale;
     const ty = h/2 - (bbox.y + bbox.height/2) * scale;
@@ -1392,7 +1413,7 @@ function mapRender() {
     const lead  = g.people[0];
     const col   = personColor(lead.id);
     const photo = lead.photoId ? S.photos[lead.photoId] : null;
-    const init  = ((lead.firstName||'')[0]+(lead.lastName||'')[0]).toUpperCase() || '?';
+    const init  = initials(lead);
     const label = g.people.length > 1
       ? (lead.location ? lead.location.split(',')[0] : `${g.people.length} people`)
       : (lead.firstName || 'Unnamed');
@@ -1423,7 +1444,7 @@ function mapRender() {
   cardsEl.style.display = located.length ? 'flex' : 'none';
   cardsEl.innerHTML = located.map(p => {
     const photo = p.photoId ? S.photos[p.photoId] : null;
-    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+    const init  = initials(p);
     const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
     const col   = personColor(p.id);
     return `<button class="map-card${p.id===S.mapSel?' sel':''}" data-id="${p.id}" onclick="mapCardTap('${p.id}')">
@@ -1572,7 +1593,7 @@ function mapSheetOpen(titleHtml, itemsHtml) {
 
 function mapSheetItem(p, sub, onclick) {
   const photo = p.photoId ? S.photos[p.photoId] : null;
-  const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+  const init  = initials(p);
   const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
   const avStyle = photo
     ? `background:#1e2130;background-image:url('${photo}');background-size:cover;background-position:center`
@@ -1806,7 +1827,7 @@ function personPickerUpdateList() {
   listEl.innerHTML = sorted.map(p => {
     const col   = personColor(p.id);
     const photo = p.photoId ? S.photos[p.photoId] : null;
-    const init  = ((p.firstName||'')[0]+(p.lastName||'')[0]).toUpperCase() || '?';
+    const init  = initials(p);
     const name  = [p.firstName,p.lastName].filter(Boolean).join(' ') || 'Unnamed';
     const sub   = [p.occupation,p.location].filter(Boolean).join(' · ');
     const avStyle = photo
@@ -2296,6 +2317,7 @@ function searchUpdateList() {
    TINY UTILS
 ═══════════════════════════════════════════════════════════════ */
 function uid()        { return crypto.randomUUID(); }
+function initials(p)  { return ((((p.firstName||'')[0]||'') + ((p.lastName||'')[0]||'')).toUpperCase()) || '?'; }
 function eh(s)        { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function ea(s)        { return String(s||'').replace(/"/g,'&quot;'); }
 function capitalize(s){ return s ? s[0].toUpperCase() + s.slice(1) : s; }
